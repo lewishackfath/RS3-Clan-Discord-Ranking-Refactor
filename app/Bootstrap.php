@@ -12,23 +12,21 @@ use App\Repositories\SettingsRepository;
 
 final class Bootstrap
 {
+    private ?Database $db = null;
+    private ?SettingsRepository $settings = null;
+
     public function __construct(
         private readonly string $basePath,
         private readonly Config $config,
-        private readonly Database $db,
         private readonly Router $router,
-        private readonly SettingsRepository $settings,
     ) {}
 
     public static function create(string $basePath): self
     {
         $config = new Config($basePath);
-        $pdo = Connection::make($config->get('database'));
-        $db = new Database($pdo);
         $router = new Router($basePath);
-        $settings = new SettingsRepository($db);
 
-        return new self($basePath, $config, $db, $router, $settings);
+        return new self($basePath, $config, $router);
     }
 
     public function basePath(string $path = ''): string
@@ -49,6 +47,11 @@ final class Bootstrap
 
     public function db(): Database
     {
+        if ($this->db === null) {
+            $pdo = Connection::make($this->config->get('database'));
+            $this->db = new Database($pdo);
+        }
+
         return $this->db;
     }
 
@@ -59,6 +62,10 @@ final class Bootstrap
 
     public function settings(): SettingsRepository
     {
+        if ($this->settings === null) {
+            $this->settings = new SettingsRepository($this->db());
+        }
+
         return $this->settings;
     }
 }
