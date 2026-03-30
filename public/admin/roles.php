@@ -5,13 +5,15 @@ require_login();
 
 $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
+$clanId = (int)env('CLAN_ID', '1');
+$missingTables = require_tables($pdo, ['discord_role_flags', 'rs_rank_mappings']);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
     try {
         $discordRoles = discord_get_guild_roles($guildId);
-        $botRoleFlags = $_POST['is_bot_role'] ?? [];
-        $protectedFlags = $_POST['is_protected_role'] ?? [];
+        $botRoleFlags = is_array($_POST['is_bot_role'] ?? null) ? $_POST['is_bot_role'] : [];
+        $protectedFlags = is_array($_POST['is_protected_role'] ?? null) ? $_POST['is_protected_role'] : [];
 
         $upsert = $pdo->prepare('INSERT INTO discord_role_flags (discord_guild_id, discord_role_id, role_name_cache, position_cache, is_bot_role, is_protected_role)
             VALUES (:guild_id, :role_id, :role_name, :position_cache, :is_bot_role, :is_protected_role)
@@ -40,14 +42,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/admin/roles.php');
 }
 
-$discordRoles = discord_get_guild_roles($guildId);
-usort($discordRoles, static fn(array $a, array $b): int => (int)$b['position'] <=> (int)$a['position']);
-
-$stmt = $pdo->prepare('SELECT * FROM discord_role_flags WHERE discord_guild_id = :guild_id');
-$stmt->execute(['guild_id' => $guildId]);
+$discordRoles = [];
 $existingFlags = [];
-foreach ($stmt->fetchAll() as $row) {
-    $existingFlags[(string)$row['discord_role_id']] = $row;
+$mappedRoleNames = [];
+
+if (!$missingTables) {
+    $discordRoles = discord_get_guild_roles($guildId);
+    usort($discordRoles, static fn(array $a, array $b): int => (int)$b['position'] <=> (int)$a['position']);
+
+    $stmt = $pdo->prepare('SELECT * FROM discord_role_flags WHERE discord_guild_id = :guild_id');
+    $stmt->execute(['guild_id' => $guildId]);
+    foreach ($stmt->fetchAll() as $row) {
+        $existingFlags[(string)$row['discord_role_id']] = $row;
+    }
+
+    $mapStmt = $pdo->prepare('SELECT rs_rank_name, discord_role_id FROM rs_rank_mappings WHERE clan_id = :clan_id AND discord_role_id IS NOT NULL AND discord_role_id <> ""');
+    $mapStmt->execute(['clan_id' => $clanId]);
+    foreach ($mapStmt->fetchAll() as $row) {
+        $mappedRoleNames[(string)$row['discord_role_id']][] = (string)$row['rs_rank_name'];
+    }
 }
 
 require_once __DIR__ . '/../../app/views/header.php';
@@ -57,6 +70,9 @@ require_once __DIR__ . '/../../app/views/header.php';
     <p class="muted">Bot roles are roles this app is allowed to manage. Protected roles are roles that later sync logic must never remove from members.</p>
 </div>
 
+<?php if ($missingTables): ?>
+    <div class="card"><span class="status bad">Setup Required</span><p>Missing table(s): <?= h(implode(', ', $missingTables)) ?></p></div>
+<?php else: ?>
 <form method="post" class="card">
     <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
     <table>
@@ -65,6 +81,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <th>Role</th>
                 <th>Position</th>
                 <th>Managed</th>
+                <th>Rank Mapping</th>
                 <th>Bot Role</th>
                 <th>Protected Role</th>
             </tr>
@@ -74,11 +91,13 @@ require_once __DIR__ . '/../../app/views/header.php';
             if ((string)$role['name'] === '@everyone') continue;
             $roleId = (string)$role['id'];
             $flags = $existingFlags[$roleId] ?? null;
+            $mappedRanks = $mappedRoleNames[$roleId] ?? [];
         ?>
             <tr>
                 <td><strong><?= h((string)$role['name']) ?></strong><br><span class="small muted"><?= h($roleId) ?></span></td>
                 <td><?= h((string)$role['position']) ?></td>
                 <td><?= !empty($role['managed']) ? 'Yes' : 'No' ?></td>
+                <td><?= $mappedRanks ? h(implode(', ', $mappedRanks)) : '<span class="muted">—</span>' ?></td>
                 <td><label><input type="checkbox" name="is_bot_role[<?= h($roleId) ?>]" <?= $flags && (int)$flags['is_bot_role'] === 1 ? 'checked' : '' ?>> Bot-managed</label></td>
                 <td><label><input type="checkbox" name="is_protected_role[<?= h($roleId) ?>]" <?= $flags && (int)$flags['is_protected_role'] === 1 ? 'checked' : '' ?>> Protected</label></td>
             </tr>
@@ -87,4 +106,5 @@ require_once __DIR__ . '/../../app/views/header.php';
     </table>
     <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Flags</button></p>
 </form>
+<?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

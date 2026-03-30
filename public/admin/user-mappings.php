@@ -4,55 +4,59 @@ require_once __DIR__ . '/../../app/config/bootstrap.php';
 require_login();
 
 $pdo = db();
-$clanId = (int)env('CLAN_ID', '1');
 $guildId = (string)env('DISCORD_GUILD_ID', '');
+$clanId = (int)env('CLAN_ID', '1');
+$missingTables = require_tables($pdo, ['discord_user_mappings', 'clan_members']);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
     try {
-        $submittedMappings = $_POST['member_id'] ?? [];
+        $discordMembers = discord_list_guild_members($guildId);
+        $memberChoices = is_array($_POST['member_id'] ?? null) ? $_POST['member_id'] : [];
 
-        $delete = $pdo->prepare('DELETE FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id AND discord_user_id = :user_id');
-        $upsert = $pdo->prepare('INSERT INTO discord_user_mappings (clan_id, discord_guild_id, discord_user_id, member_id, rsn_cache, discord_username_cache, discord_nickname_cache)
-            VALUES (:clan_id, :guild_id, :user_id, :member_id, :rsn_cache, :username_cache, :nickname_cache)
-            ON DUPLICATE KEY UPDATE member_id = VALUES(member_id), rsn_cache = VALUES(rsn_cache), discord_username_cache = VALUES(discord_username_cache), discord_nickname_cache = VALUES(discord_nickname_cache)');
-
-        $membersStmt = $pdo->prepare('SELECT id, rsn FROM clan_members WHERE clan_id = :clan_id AND is_active = 1');
-        $membersStmt->execute(['clan_id' => $clanId]);
+        $clanMembersStmt = $pdo->prepare('SELECT id, rsn, rank_name FROM clan_members WHERE clan_id = :clan_id');
+        $clanMembersStmt->execute(['clan_id' => $clanId]);
         $clanMembersById = [];
-        foreach ($membersStmt->fetchAll() as $member) {
-            $clanMembersById[(string)$member['id']] = $member;
+        foreach ($clanMembersStmt->fetchAll() as $row) {
+            $clanMembersById[(string)$row['id']] = $row;
         }
 
-        $discordMembers = [];
-        foreach (discord_list_guild_members($guildId) as $member) {
-            $summary = discord_format_member_summary($member);
-            $discordMembers[$summary['user_id']] = $summary;
-        }
+        $upsert = $pdo->prepare('INSERT INTO discord_user_mappings (clan_id, discord_guild_id, discord_user_id, member_id, rsn_cache, discord_username_cache, discord_nickname_cache)
+            VALUES (:clan_id, :guild_id, :discord_user_id, :member_id, :rsn_cache, :username_cache, :nickname_cache)
+            ON DUPLICATE KEY UPDATE member_id = VALUES(member_id), rsn_cache = VALUES(rsn_cache), discord_username_cache = VALUES(discord_username_cache), discord_nickname_cache = VALUES(discord_nickname_cache)');
+        $delete = $pdo->prepare('DELETE FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id AND discord_user_id = :discord_user_id');
 
-        foreach ($submittedMappings as $userId => $memberId) {
-            $userId = (string)$userId;
-            $memberId = trim((string)$memberId);
+        foreach ($discordMembers as $discordMember) {
+            $summary = discord_format_member_summary($discordMember);
+            $userId = (string)$summary['user_id'];
+            $memberId = trim((string)($memberChoices[$userId] ?? ''));
+
             if ($memberId === '') {
-                $delete->execute(['clan_id' => $clanId, 'guild_id' => $guildId, 'user_id' => $userId]);
+                $delete->execute([
+                    'clan_id' => $clanId,
+                    'guild_id' => $guildId,
+                    'discord_user_id' => $userId,
+                ]);
                 continue;
             }
+
             if (!isset($clanMembersById[$memberId])) {
                 continue;
             }
-            $discordMember = $discordMembers[$userId] ?? ['username' => '', 'nickname' => ''];
+
+            $member = $clanMembersById[$memberId];
             $upsert->execute([
                 'clan_id' => $clanId,
                 'guild_id' => $guildId,
-                'user_id' => $userId,
-                'member_id' => (int)$memberId,
-                'rsn_cache' => (string)$clanMembersById[$memberId]['rsn'],
-                'username_cache' => (string)($discordMember['username'] ?? ''),
-                'nickname_cache' => (string)($discordMember['nickname'] ?? ''),
+                'discord_user_id' => $userId,
+                'member_id' => (int)$member['id'],
+                'rsn_cache' => (string)$member['rsn'],
+                'username_cache' => (string)$summary['username'],
+                'nickname_cache' => (string)$summary['nickname'],
             ]);
         }
 
-        flash('success', 'User mappings saved. Blank selections were not stored and will fall back to nickname matching at runtime.');
+        flash('success', 'User mappings saved. Blank selections remain runtime-only nickname fallbacks.');
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
@@ -60,28 +64,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/admin/user-mappings.php');
 }
 
-$memberRows = discord_list_guild_members($guildId);
 $discordMembers = [];
-foreach ($memberRows as $row) {
-    $summary = discord_format_member_summary($row);
-    $discordMembers[] = $summary;
-}
-usort($discordMembers, static fn(array $a, array $b): int => strcmp($a['display_name'], $b['display_name']));
-
-$clanStmt = $pdo->prepare('SELECT id, rsn, rank_name, rsn_normalised FROM clan_members WHERE clan_id = :clan_id AND is_active = 1 ORDER BY rsn ASC');
-$clanStmt->execute(['clan_id' => $clanId]);
-$clanMembers = $clanStmt->fetchAll();
-
-$manualStmt = $pdo->prepare('SELECT * FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id');
-$manualStmt->execute(['clan_id' => $clanId, 'guild_id' => $guildId]);
 $manualMappings = [];
-foreach ($manualStmt->fetchAll() as $row) {
-    $manualMappings[(string)$row['discord_user_id']] = $row;
-}
-
+$clanMembers = [];
 $memberByNormalisedRsn = [];
-foreach ($clanMembers as $member) {
-    $memberByNormalisedRsn[(string)$member['rsn_normalised']] = $member;
+
+if (!$missingTables) {
+    $discordMembersRaw = discord_list_guild_members($guildId);
+    foreach ($discordMembersRaw as $member) {
+        $discordMembers[] = discord_format_member_summary($member);
+    }
+
+    usort($discordMembers, static fn(array $a, array $b): int => strcasecmp((string)$a['display_name'], (string)$b['display_name']));
+
+    $stmt = $pdo->prepare('SELECT * FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id');
+    $stmt->execute(['clan_id' => $clanId, 'guild_id' => $guildId]);
+    foreach ($stmt->fetchAll() as $row) {
+        $manualMappings[(string)$row['discord_user_id']] = $row;
+    }
+
+    $clanStmt = $pdo->prepare('SELECT * FROM clan_members WHERE clan_id = :clan_id AND is_active = 1 ORDER BY rsn ASC');
+    $clanStmt->execute(['clan_id' => $clanId]);
+    $clanMembers = $clanStmt->fetchAll() ?: [];
+    foreach ($clanMembers as $member) {
+        $memberByNormalisedRsn[(string)$member['rsn_normalised']] = $member;
+    }
 }
 
 require_once __DIR__ . '/../../app/views/header.php';
@@ -91,6 +98,9 @@ require_once __DIR__ . '/../../app/views/header.php';
     <p class="muted">Only manual selections are stored here. If a user has no saved mapping, runtime logic should fall back to nickname searching.</p>
 </div>
 
+<?php if ($missingTables): ?>
+    <div class="card"><span class="status bad">Setup Required</span><p>Missing table(s): <?= h(implode(', ', $missingTables)) ?></p></div>
+<?php else: ?>
 <form method="post" class="card">
     <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
     <table>
@@ -143,4 +153,5 @@ require_once __DIR__ . '/../../app/views/header.php';
     </table>
     <p style="margin-top:16px"><button class="btn-primary" type="submit">Save User Mappings</button></p>
 </form>
+<?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

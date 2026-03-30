@@ -5,81 +5,52 @@ require_login();
 
 $pdo = db();
 $clanId = (int)env('CLAN_ID', '1');
+$missingTables = require_tables($pdo, ['clan_members']);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
-
     try {
-        $action = (string)($_POST['action'] ?? 'save_single');
+        $action = (string)($_POST['action'] ?? '');
 
-        if ($action === 'save_single') {
-            $memberId = (int)($_POST['member_id'] ?? 0);
+        if ($action === 'create') {
             $rsn = trim((string)($_POST['rsn'] ?? ''));
             $rankName = trim((string)($_POST['rank_name'] ?? ''));
-            $isActive = isset($_POST['is_active']) ? 1 : 0;
             if ($rsn === '') {
                 throw new RuntimeException('RSN is required.');
             }
 
-            if ($memberId > 0) {
-                $stmt = $pdo->prepare('UPDATE clan_members SET rsn = :rsn, rsn_normalised = :normalised, rank_name = :rank_name, is_active = :is_active WHERE id = :id AND clan_id = :clan_id');
-                $stmt->execute([
-                    'rsn' => $rsn,
-                    'normalised' => normalise_rsn($rsn),
-                    'rank_name' => $rankName !== '' ? $rankName : null,
-                    'is_active' => $isActive,
-                    'id' => $memberId,
-                    'clan_id' => $clanId,
-                ]);
-                flash('success', 'Clan member updated.');
-            } else {
-                $stmt = $pdo->prepare('INSERT INTO clan_members (clan_id, rsn, rsn_normalised, rank_name, is_active) VALUES (:clan_id, :rsn, :normalised, :rank_name, :is_active)');
-                $stmt->execute([
-                    'clan_id' => $clanId,
-                    'rsn' => $rsn,
-                    'normalised' => normalise_rsn($rsn),
-                    'rank_name' => $rankName !== '' ? $rankName : null,
-                    'is_active' => $isActive,
-                ]);
-                flash('success', 'Clan member added.');
-            }
-        }
-
-        if ($action === 'import_csv') {
-            $csv = trim((string)($_POST['csv_rows'] ?? ''));
-            if ($csv === '') {
-                throw new RuntimeException('Paste at least one CSV row.');
-            }
-
-            $rows = preg_split('/\r\n|\r|\n/', $csv) ?: [];
-            $insert = $pdo->prepare('INSERT INTO clan_members (clan_id, rsn, rsn_normalised, rank_name, is_active)
-                VALUES (:clan_id, :rsn, :normalised, :rank_name, 1)
-                ON DUPLICATE KEY UPDATE rsn = VALUES(rsn), rank_name = VALUES(rank_name), is_active = 1');
-            $count = 0;
-            foreach ($rows as $row) {
-                $row = trim($row);
-                if ($row === '') {
-                    continue;
-                }
-                $parts = str_getcsv($row);
-                $rsn = trim((string)($parts[0] ?? ''));
-                $rankName = trim((string)($parts[1] ?? ''));
-                if ($rsn === '' || strcasecmp($rsn, 'rsn') === 0) {
-                    continue;
-                }
-                $insert->execute([
-                    'clan_id' => $clanId,
-                    'rsn' => $rsn,
-                    'normalised' => normalise_rsn($rsn),
-                    'rank_name' => $rankName !== '' ? $rankName : null,
-                ]);
-                $count++;
-            }
-            flash('success', 'Imported ' . $count . ' clan member row(s).');
-        }
-
-        if ($action === 'delete') {
+            $stmt = $pdo->prepare('INSERT INTO clan_members (clan_id, rsn, rsn_normalised, rank_name, is_active) VALUES (:clan_id, :rsn, :rsn_normalised, :rank_name, :is_active)');
+            $stmt->execute([
+                'clan_id' => $clanId,
+                'rsn' => $rsn,
+                'rsn_normalised' => normalise_rsn($rsn),
+                'rank_name' => $rankName !== '' ? $rankName : null,
+                'is_active' => isset($_POST['is_active']) ? 1 : 0,
+            ]);
+            flash('success', 'Clan member added.');
+        } elseif ($action === 'save_single') {
             $memberId = (int)($_POST['member_id'] ?? 0);
+            $rsn = trim((string)($_POST['rsn'] ?? ''));
+            $rankName = trim((string)($_POST['rank_name'] ?? ''));
+            if ($memberId <= 0 || $rsn === '') {
+                throw new RuntimeException('Member ID and RSN are required.');
+            }
+
+            $stmt = $pdo->prepare('UPDATE clan_members SET rsn = :rsn, rsn_normalised = :rsn_normalised, rank_name = :rank_name, is_active = :is_active WHERE id = :id AND clan_id = :clan_id');
+            $stmt->execute([
+                'id' => $memberId,
+                'clan_id' => $clanId,
+                'rsn' => $rsn,
+                'rsn_normalised' => normalise_rsn($rsn),
+                'rank_name' => $rankName !== '' ? $rankName : null,
+                'is_active' => isset($_POST['is_active']) ? 1 : 0,
+            ]);
+            flash('success', 'Clan member updated.');
+        } elseif ($action === 'delete') {
+            $memberId = (int)($_POST['member_id'] ?? 0);
+            if ($memberId <= 0) {
+                throw new RuntimeException('Invalid member ID.');
+            }
             $stmt = $pdo->prepare('DELETE FROM clan_members WHERE id = :id AND clan_id = :clan_id');
             $stmt->execute(['id' => $memberId, 'clan_id' => $clanId]);
             flash('success', 'Clan member deleted.');
@@ -91,39 +62,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/admin/clan-members.php');
 }
 
-$members = $pdo->prepare('SELECT * FROM clan_members WHERE clan_id = :clan_id ORDER BY is_active DESC, rsn ASC');
-$members->execute(['clan_id' => $clanId]);
-$members = $members->fetchAll();
+$members = [];
+if (!$missingTables) {
+    $stmt = $pdo->prepare('SELECT * FROM clan_members WHERE clan_id = :clan_id ORDER BY is_active DESC, rsn ASC');
+    $stmt->execute(['clan_id' => $clanId]);
+    $members = $stmt->fetchAll() ?: [];
+}
 
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
-<div class="grid two">
-    <div class="card">
-        <h2>Add Clan Member</h2>
-        <form method="post">
-            <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
-            <input type="hidden" name="action" value="save_single">
-            <input type="hidden" name="member_id" value="0">
-            <p><label>RSN<br><input type="text" name="rsn" required></label></p>
-            <p><label>Rank Name<br><input type="text" name="rank_name"></label></p>
-            <p><label><input type="checkbox" name="is_active" checked> Active</label></p>
-            <p><button class="btn-primary" type="submit">Add Member</button></p>
-        </form>
-    </div>
-    <div class="card">
-        <h2>Bulk Import</h2>
-        <p class="muted">Paste <code>RSN,Rank</code> rows. Header row is optional.</p>
-        <form method="post">
-            <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
-            <input type="hidden" name="action" value="import_csv">
-            <p><textarea name="csv_rows" placeholder="RSN,Rank&#10;Example User,Captain&#10;Another User,Recruit"></textarea></p>
-            <p><button class="btn-primary" type="submit">Import Rows</button></p>
-        </form>
-    </div>
+<div class="card">
+    <h2>Clan Members</h2>
+    <p class="muted">This page seeds the RuneScape member list used by user mapping and rank mapping previews.</p>
+</div>
+
+<?php if ($missingTables): ?>
+    <div class="card"><span class="status bad">Setup Required</span><p>Missing table(s): <?= h(implode(', ', $missingTables)) ?></p></div>
+<?php else: ?>
+<div class="card">
+    <h3>Add Clan Member</h3>
+    <form method="post" class="grid two">
+        <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+        <input type="hidden" name="action" value="create">
+        <div>
+            <label>RSN</label>
+            <input type="text" name="rsn" required>
+        </div>
+        <div>
+            <label>Rank Name</label>
+            <input type="text" name="rank_name" placeholder="Optional">
+        </div>
+        <div>
+            <label><input type="checkbox" name="is_active" checked> Active member</label>
+        </div>
+        <div>
+            <button class="btn-primary" type="submit">Add Member</button>
+        </div>
+    </form>
 </div>
 
 <div class="card">
-    <h2>Current Clan Members</h2>
+    <h3>Existing Clan Members</h3>
     <table>
         <thead>
             <tr>
@@ -159,4 +138,5 @@ require_once __DIR__ . '/../../app/views/header.php';
         </tbody>
     </table>
 </div>
+<?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

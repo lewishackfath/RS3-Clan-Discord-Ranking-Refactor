@@ -2,6 +2,10 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../../app/config/bootstrap.php';
 
+if (current_admin()) {
+    redirect('/admin/index.php');
+}
+
 $state = bin2hex(random_bytes(24));
 $_SESSION['oauth_state'] = $state;
 $flashes = get_flashes();
@@ -42,7 +46,7 @@ $loginUrl = 'https://discord.com/api/oauth2/authorize?' . $query;
             <div class="flash <?= h($flash['type']) ?>"><?= h($flash['message']) ?></div>
         <?php endforeach; ?>
 
-        <p>This replacement Phase 1 build is <strong>PHP-only</strong>. There is no separate Node proxy process to run.</p>
+        <p>This Phase 1.1 build is <strong>PHP-only</strong>. There is no separate Node proxy process to run.</p>
         <ul>
             <li>OAuth handles admin sign-in.</li>
             <li>The web app uses the bot token directly for guild, role and member API calls.</li>

@@ -15,7 +15,17 @@ function current_admin(): ?array
 
 function clear_admin_session(): void
 {
-    unset($_SESSION['admin_user'], $_SESSION['oauth_access_token']);
+    $_SESSION = [];
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_regenerate_id(true);
+    }
+}
+
+function complete_admin_login(array $adminUser, string $accessToken): void
+{
+    session_regenerate_id(true);
+    $_SESSION['admin_user'] = $adminUser;
+    $_SESSION['oauth_access_token'] = $accessToken;
 }
 
 function is_admin_authorised(array $guildMember, array $guildRoles, ?string $candidateUserId = null): bool

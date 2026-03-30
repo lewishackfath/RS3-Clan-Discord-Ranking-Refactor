@@ -80,3 +80,37 @@ function discord_avatar_url(array $user, int $size = 64): string
     $index = $discriminator > 0 ? $discriminator % 5 : ((int)$userId >> 22) % 6;
     return 'https://cdn.discordapp.com/embed/avatars/' . $index . '.png';
 }
+
+function table_exists(PDO $pdo, string $tableName): bool
+{
+    $stmt = $pdo->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table LIMIT 1');
+    $stmt->execute(['table' => $tableName]);
+    return (bool)$stmt->fetchColumn();
+}
+
+function require_tables(PDO $pdo, array $tables): array
+{
+    $missing = [];
+    foreach ($tables as $table) {
+        if (!table_exists($pdo, $table)) {
+            $missing[] = $table;
+        }
+    }
+    return $missing;
+}
+
+function rs_rank_order(): array
+{
+    return [
+        'Recruit',
+        'Corporal',
+        'Sergeant',
+        'Lieutenant',
+        'Captain',
+        'General',
+        'Coordinator',
+        'Overseer',
+        'Deputy Owner',
+        'Owner',
+    ];
+}

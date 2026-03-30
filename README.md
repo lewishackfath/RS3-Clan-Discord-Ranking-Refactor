@@ -1,24 +1,34 @@
-# RS3 Clan Discord Ranker - Phase 1 (PHP-only replacement)
+# RS3 Clan Discord Ranker - Phase 1.1 patch pack
 
-This replacement package removes the separate Node proxy service.
+This patch pack keeps the PHP-only architecture and fixes the first-round setup/auth issues.
 
-## What this build includes
+## What changed in Phase 1.1
 
-- Discord OAuth admin login in PHP
-- Direct Discord REST calls from PHP using the bot token
-- Bot/server readiness dashboard
-- Clan member management page
-- RuneScape rank -> Discord role mapping
-- Role flagging (`bot role`, `protected role`)
-- Discord user -> RSN manual mapping
-- Runtime fallback to nickname matching when no manual mapping exists
+- Fixed first-login admin authorisation bug in Discord OAuth callback
+- Hardened session handling
+- Login page now redirects straight to dashboard when already signed in
+- Dashboard now handles missing schema tables gracefully instead of fatalling
+- Added setup checks to clan members, role mappings, role flags, and user mappings pages
+- Role mappings now use fixed RuneScape rank order
+- Role mappings warn when selected roles sit above the bot
+- Role flags page now shows which roles are already mapped to RuneScape ranks
+- User mappings continue to store **manual mappings only**
+- Blank user mappings remain **runtime-only nickname fallback**
 
 ## Important behaviour
 
 - Only **manual user mappings** are saved.
 - If a Discord member has no manual mapping, runtime logic should fall back to **nickname searching**.
 - Nickname matches are shown only as a **preview** in the admin UI.
-- The dashboard checks that the bot's highest role is at the **top of the server role hierarchy** and above any mapped or bot-managed roles.
+- The dashboard checks that the bot's highest role is above any mapped or bot-managed roles.
+
+## Upgrade steps
+
+1. Back up your current deployed files.
+2. Replace the project files with this patch pack.
+3. Keep your existing `.env`.
+4. If you already imported `sql/schema.sql`, there is no required DB migration for this patch.
+5. Log in again and test dashboard, role mappings, role flags, clan members, and user mappings.
 
 ## Requirements
 
@@ -32,29 +42,8 @@ This replacement package removes the separate Node proxy service.
   - redirect URI configured
   - the bot invited to the target guild
 
-## Folder layout
-
-- `public/` - web root
-- `app/` - shared PHP code
-- `sql/` - schema
-- `.env.example` - sample environment file
-
-## Setup
-
-1. Copy `.env.example` to `.env` and fill in your real values.
-2. Import `sql/schema.sql`.
-3. Point your web root at `public/`.
-4. In Discord Developer Portal, ensure the redirect URI exactly matches `DISCORD_REDIRECT_URI`.
-5. Invite the bot to the server and move the bot role to the top of your server role list.
-
-## Login flow
-
-- Login uses the `identify` OAuth scope.
-- After OAuth, PHP uses the bot token to confirm the user is in the configured guild.
-- If `ADMIN_DISCORD_USER_IDS` or `ADMIN_DISCORD_ROLE_IDS` is set, those values are enforced.
-
 ## Notes
 
-- This is Phase 1 only. It does not perform automated role sync jobs yet.
+- This is still Phase 1 only. It does not perform automated role sync jobs yet.
 - If your guild is large, the user mappings page may take longer because it reads guild members directly from Discord.
-- The new `Clan Members` page exists so you can seed and maintain the clan member list without needing another tool first.
+- The `Clan Members` page exists so you can seed and maintain the clan member list without needing another tool first.
