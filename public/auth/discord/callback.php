@@ -33,13 +33,13 @@ try {
     }
 
     $guildRoles = discord_get_guild_roles($guildId);
-    if (!is_admin_authorised($guildMember, $guildRoles)) {
+    if (!is_admin_authorised($guildMember, $guildRoles, (string)$user['id'])) {
         throw new RuntimeException('Your Discord account is not authorised for this admin interface.');
     }
 
     $_SESSION['admin_user'] = [
         'id' => (string)$user['id'],
-        'username' => (string)($user['global_name'] ?: $user['username'] ?? 'Unknown'),
+        'username' => (string)(($user['global_name'] ?? '') !== '' ? $user['global_name'] : ($user['username'] ?? 'Unknown')),
         'raw_username' => (string)($user['username'] ?? ''),
         'avatar' => (string)($user['avatar'] ?? ''),
     ];
