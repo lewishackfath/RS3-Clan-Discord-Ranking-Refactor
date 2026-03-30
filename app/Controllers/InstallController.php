@@ -1,6 +1,6 @@
 <?php
 
-declar\e(strict_types=1);
+declare(strict_types=1);
 
 namespace App\Controllers;
 
@@ -21,7 +21,7 @@ final class InstallController
 
     public function index(): void
     {
-        $state = new InstallStat\e($this->basePath);
+        $state = new InstallState($this->basePath);
         if ($state->isInstalled()) {
             \redirect('/');
         }
@@ -35,17 +35,17 @@ final class InstallController
         \session_clear_old_input();
     }
 
-    public function stor\e(): void
+    public function store(): void
     {
-        $state = new InstallStat\e($this->basePath);
+        $state = new InstallState($this->basePath);
         if ($state->isInstalled()) {
-            http_response_cod\e(403);
+            http_response_code(403);
             echo 'Application is already installed.';
             return;
         }
 
         if (!\verify_csrf($_POST['_csrf'] ?? null)) {
-            http_response_cod\e(419);
+            http_response_code(419);
             echo 'Invalid CSRF token.';
             return;
         }
@@ -56,7 +56,7 @@ final class InstallController
         $checker = new RequirementChecker($this->basePath);
         $requirements = $checker->check();
 
-        $errors = $this->validat\e($data, $requirements['ok']);
+        $errors = $this->validate($data, $requirements['ok']);
         if ($errors !== []) {
             \session_flash('errors', $errors);
             \redirect('/install');
@@ -90,13 +90,13 @@ final class InstallController
 
             $pdo->beginTransaction();
 
-            (new Schema())->creat\e($pdo);
+            (new Schema())->create($pdo);
             (new SettingsSeeder())->seed($pdo, $data);
-            $bootstrapToken = (new AdminBootstrap())->prepar\e($pdo, 60);
+            $bootstrapToken = (new AdminBootstrap())->prepare($pdo, 60);
 
             $pdo->commit();
 
-            (new ConfigWriter($this->basePath))->writ\e($data);
+            (new ConfigWriter($this->basePath))->write($data);
             $state->writeLock([
                 'app_name' => $data['app_name'],
                 'app_url' => $data['app_url'],
@@ -104,14 +104,14 @@ final class InstallController
             ]);
 
             \session_flash('success', 'Installation completed successfully.');
-            \redirect('/install/success?bootstrap=' . urlencod\e($bootstrapToken));
+            \redirect('/install/success?bootstrap=' . urlencode($bootstrapToken));
         } catch (\Throwable $e) {
             if ($pdo instanceof PDO && $pdo->inTransaction()) {
                 $pdo->rollBack();
             }
 
             \session_flash('errors', [
-                'install' => 'Install failed: ' . $e->getMessag\e(),
+                'install' => 'Install failed: ' . $e->getMessage(),
             ]);
             \redirect('/install');
         }
@@ -119,7 +119,7 @@ final class InstallController
 
     public function success(): void
     {
-        $state = new InstallStat\e($this->basePath);
+        $state = new InstallState($this->basePath);
         if (!$state->isInstalled()) {
             \redirect('/install');
         }
@@ -151,7 +151,7 @@ final class InstallController
         ];
     }
 
-    private function validat\e(array $data, bool $requirementsOk): array
+    private function validate(array $data, bool $requirementsOk): array
     {
         $errors = [];
 

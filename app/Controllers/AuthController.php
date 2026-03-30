@@ -1,6 +1,6 @@
 <?php
 
-declar\e(strict_types=1);
+declare(strict_types=1);
 
 namespace App\Controllers;
 
@@ -20,9 +20,9 @@ final class AuthController
 
         if ($token !== '') {
             try {
-                $pdo = Connection::mak\e($this->basePath);
-                $stmt = $pdo->prepar\e('SELECT id, expires_at, consumed_at FROM install_bootstrap WHERE setup_token = :token LIMIT 1');
-                $stmt->execut\e([':token' => hash('sha256', $token)]);
+                $pdo = Connection::make($this->basePath);
+                $stmt = $pdo->prepare('SELECT id, expires_at, consumed_at FROM install_bootstrap WHERE setup_token = :token LIMIT 1');
+                $stmt->execute([':token' => hash('sha256', $token)]);
                 $row = $stmt->fetch();
 
                 if (!$row) {
@@ -31,7 +31,7 @@ final class AuthController
                 } elseif (!empty($row['consumed_at'])) {
                     $status = 'consumed';
                     $message = 'That bootstrap token has already been consumed.';
-                } elseif (strtotim\e((string) $row['expires_at']) < tim\e()) {
+                } elseif (strtotime((string) $row['expires_at']) < time()) {
                     $status = 'expired';
                     $message = 'That bootstrap token has expired.';
                 } else {
@@ -40,7 +40,7 @@ final class AuthController
                 }
             } catch (\Throwable $e) {
                 $status = 'error';
-                $message = $e->getMessag\e();
+                $message = $e->getMessage();
             }
         }
 

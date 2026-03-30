@@ -1,6 +1,6 @@
 <?php
 
-declar\e(strict_types=1);
+declare(strict_types=1);
 
 namespace App\Controllers;
 
@@ -14,7 +14,7 @@ final class HomeController
 
     public function index(): void
     {
-        $state = new InstallStat\e($this->basePath);
+        $state = new InstallState($this->basePath);
         if (!$state->isInstalled()) {
             \redirect('/install');
         }

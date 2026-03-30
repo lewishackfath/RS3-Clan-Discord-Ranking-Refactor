@@ -34,43 +34,6 @@ if (is_file($helpersPath)) {
             return $path !== '' ? $base . '/' . ltrim($path, '/') : $base;
         }
     }
-
-    if (!function_exists('session_flash')) {
-        function session_flash(string $key, mixed $value): void
-        {
-            $_SESSION['_flash'][$key] = $value;
-        }
-    }
-    if (!function_exists('session_get_flash')) {
-        function session_get_flash(string $key, mixed $default = null): mixed
-        {
-            if (!isset($_SESSION['_flash'][$key])) {
-                return $default;
-            }
-            $value = $_SESSION['_flash'][$key];
-            unset($_SESSION['_flash'][$key]);
-            return $value;
-        }
-    }
-    if (!function_exists('session_old_input')) {
-        function session_old_input(array $input): void
-        {
-            $_SESSION['_old'] = $input;
-        }
-    }
-    if (!function_exists('session_clear_old_input')) {
-        function session_clear_old_input(): void
-        {
-            unset($_SESSION['_old']);
-        }
-    }
-    if (!function_exists('verify_csrf')) {
-        function verify_csrf(?string $token): bool
-        {
-            return is_string($token) && isset($_SESSION['_csrf']) && hash_equals($_SESSION['_csrf'], $token);
-        }
-    }
-
 }
 
 if (!is_file($autoloaderPath)) {
