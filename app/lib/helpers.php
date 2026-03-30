@@ -12,24 +12,6 @@ function redirect(string $path): never
     exit;
 }
 
-function post_csrf_token(): string
-{
-    if (empty($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION['csrf_token'];
-}
-
-function verify_csrf_or_fail(): void
-{
-    $token = $_POST['csrf_token'] ?? '';
-    $session = $_SESSION['csrf_token'] ?? '';
-    if (!$token || !$session || !hash_equals($session, $token)) {
-        http_response_code(419);
-        exit('Invalid CSRF token');
-    }
-}
-
 function flash(string $type, string $message): void
 {
     $_SESSION['flash'][] = ['type' => $type, 'message' => $message];
@@ -42,30 +24,59 @@ function get_flashes(): array
     return is_array($flashes) ? $flashes : [];
 }
 
-function normalise_rsn(string $value): string
+function post_csrf_token(): string
 {
-    $value = preg_replace('/[\x{00A0}\x{200B}-\x{200D}\x{FEFF}]/u', ' ', $value) ?? $value;
-    $value = trim($value);
-    $value = preg_replace('/\s+/', ' ', $value) ?? $value;
-    $value = strtolower($value);
-    $value = str_replace('_', ' ', $value);
-    return trim($value);
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function verify_csrf_or_fail(): void
+{
+    $token = (string)($_POST['csrf_token'] ?? '');
+    $session = (string)($_SESSION['csrf_token'] ?? '');
+    if ($token === '' || $session === '' || !hash_equals($session, $token)) {
+        http_response_code(419);
+        exit('Invalid CSRF token');
+    }
+}
+
+function app_url(string $path = ''): string
+{
+    $base = rtrim((string)env('APP_URL', ''), '/');
+    return $base . '/' . ltrim($path, '/');
 }
 
 function csv_ids(string $value): array
 {
     $parts = array_map('trim', explode(',', $value));
-    return array_values(array_filter($parts, static fn($v) => $v !== ''));
+    return array_values(array_filter($parts, static fn(string $part): bool => $part !== ''));
 }
 
-function bot_api_base(): string
+function normalise_rsn(string $value): string
 {
-    return 'http://' . env('BOT_HOST', '127.0.0.1') . ':' . env('BOT_PORT', '3100');
+    $value = preg_replace('/[\x{00A0}\x{200B}-\x{200D}\x{FEFF}]/u', ' ', $value) ?? $value;
+    $value = str_replace('_', ' ', $value);
+    $value = trim($value);
+    $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+    return mb_strtolower($value, 'UTF-8');
 }
 
-function app_url(string $path = ''): string
+function now_utc(): string
 {
-    $base = rtrim(env('APP_URL', ''), '/');
-    $path = '/' . ltrim($path, '/');
-    return $base . $path;
+    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+}
+
+function discord_avatar_url(array $user, int $size = 64): string
+{
+    $userId = (string)($user['id'] ?? '');
+    $avatar = (string)($user['avatar'] ?? '');
+    if ($userId !== '' && $avatar !== '') {
+        return sprintf('https://cdn.discordapp.com/avatars/%s/%s.png?size=%d', $userId, $avatar, $size);
+    }
+
+    $discriminator = (int)($user['discriminator'] ?? 0);
+    $index = $discriminator > 0 ? $discriminator % 5 : ((int)$userId >> 22) % 6;
+    return 'https://cdn.discordapp.com/embed/avatars/' . $index . '.png';
 }

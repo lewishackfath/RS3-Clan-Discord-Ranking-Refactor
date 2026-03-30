@@ -1,96 +1,60 @@
-# RS3 Clan Discord Ranker - Phase 1
+# RS3 Clan Discord Ranker - Phase 1 (PHP-only replacement)
 
-Phase 1 delivers a working admin interface for:
+This replacement package removes the separate Node proxy service.
 
-- Discord OAuth admin login
-- Environment-based configuration
-- Bot/server readiness validation
-- RuneScape clan rank -> Discord role mapping
+## What this build includes
+
+- Discord OAuth admin login in PHP
+- Direct Discord REST calls from PHP using the bot token
+- Bot/server readiness dashboard
+- Clan member management page
+- RuneScape rank -> Discord role mapping
 - Role flagging (`bot role`, `protected role`)
 - Discord user -> RSN manual mapping
 - Runtime fallback to nickname matching when no manual mapping exists
 
-## Stack
-
-- **PHP 8.1+** for the admin UI
-- **MariaDB / MySQL** for storage
-- **Node.js 20+** for the Discord bot/service
-- **discord.js 14** for guild validation and future sync work
-
 ## Important behaviour
 
-- The admin UI stores **manual user mappings only**.
-- If a Discord member has no manual mapping, the bot uses **nickname matching at runtime**.
-- Nickname matches are **not saved** into the database by default.
-- On first load, the dashboard checks whether the bot's highest role sits above the roles it may need to manage.
+- Only **manual user mappings** are saved.
+- If a Discord member has no manual mapping, runtime logic should fall back to **nickname searching**.
+- Nickname matches are shown only as a **preview** in the admin UI.
+- The dashboard checks that the bot's highest role is at the **top of the server role hierarchy** and above any mapped or bot-managed roles.
 
-## Project layout
+## Requirements
+
+- PHP 8.1+
+- `pdo_mysql`
+- `curl`
+- MySQL or MariaDB
+- A Discord application with:
+  - bot token
+  - OAuth client ID / secret
+  - redirect URI configured
+  - the bot invited to the target guild
+
+## Folder layout
 
 - `public/` - web root
 - `app/` - shared PHP code
-- `bot/` - Node bot/service
 - `sql/` - schema
 - `.env.example` - sample environment file
 
 ## Setup
 
-### 1. Create the database
+1. Copy `.env.example` to `.env` and fill in your real values.
+2. Import `sql/schema.sql`.
+3. Point your web root at `public/`.
+4. In Discord Developer Portal, ensure the redirect URI exactly matches `DISCORD_REDIRECT_URI`.
+5. Invite the bot to the server and move the bot role to the top of your server role list.
 
-Import:
+## Login flow
 
-```sql
-sql/schema.sql
-```
-
-### 2. Create your environment file
-
-Copy `.env.example` to `.env` and update values.
-
-### 3. Install bot dependencies
-
-```bash
-cd bot
-npm install
-```
-
-### 4. Run the bot
-
-```bash
-npm start
-```
-
-### 5. Point your web root at
-
-```text
-public/
-```
-
-## OAuth scopes
-
-The login flow expects these scopes:
-
-- `identify`
-- `guilds`
-
-If you want to read guild member details directly with user tokens later, you can extend this, but Phase 1 uses the bot token for guild data and the OAuth login for admin identity.
-
-## Suggested Discord bot permissions
-
-At minimum, invite the bot with permissions needed for future role work. A conservative starting set is:
-
-- View Channels
-- Manage Roles
-- Read Message History
-
-Administrator is not required, but the bot **must** have its role above any roles it is expected to manage.
-
-## Admin access
-
-A user may access the admin UI if either of the following is true:
-
-1. Their Discord user ID is listed in `ADMIN_DISCORD_USER_IDS`
-2. They hold one of the roles listed in `ADMIN_DISCORD_ROLE_IDS`
+- Login uses the `identify` OAuth scope.
+- After OAuth, PHP uses the bot token to confirm the user is in the configured guild.
+- If `ADMIN_DISCORD_USER_IDS` or `ADMIN_DISCORD_ROLE_IDS` is set, those values are enforced.
 
 ## Notes
 
-This is intentionally a clean Phase 1 foundation. It does not yet perform full automated role syncs.
+- This is Phase 1 only. It does not perform automated role sync jobs yet.
+- If your guild is large, the user mappings page may take longer because it reads guild members directly from Discord.
+- The new `Clan Members` page exists so you can seed and maintain the clan member list without needing another tool first.

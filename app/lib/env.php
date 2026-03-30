@@ -8,7 +8,7 @@ function load_env(string $file): void
         return;
     }
 
-    $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    $lines = file($file, FILE_IGNORE_NEW_LINES) ?: [];
     foreach ($lines as $line) {
         $line = trim($line);
         if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {

@@ -3,131 +3,83 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../app/config/bootstrap.php';
 require_login();
 
-$summary = null;
-$error = null;
+$guildId = (string)env('DISCORD_GUILD_ID', '');
+$pdo = db();
 
+$mappedRoleIds = $pdo->query("SELECT discord_role_id FROM rs_rank_mappings WHERE clan_id = " . (int)env('CLAN_ID', '1') . " AND discord_role_id IS NOT NULL AND discord_role_id <> ''")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+$botRoleIds = $pdo->query("SELECT discord_role_id FROM discord_role_flags WHERE discord_guild_id = " . $pdo->quote($guildId) . " AND is_bot_role = 1")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+$status = null;
+$errorMessage = null;
 try {
-    $response = bot_service_request('/guild/summary');
-    if (($response['status'] ?? 500) !== 200 || !is_array($response['json'])) {
-        throw new RuntimeException('Bot service did not return a valid guild summary.');
-    }
-    $summary = $response['json'];
+    $status = validate_bot_readiness($guildId, array_map('strval', $mappedRoleIds), array_map('strval', $botRoleIds));
 
-    $botHighestPosition = (int)($summary['bot']['highest_role']['position'] ?? -1);
-    $problemRoles = [];
+    $stmt = $pdo->prepare('INSERT INTO guild_settings (clan_id, discord_guild_id, guild_name_cache, bot_user_id, bot_role_id, bot_role_name_cache, last_validation_at, validation_status, validation_message)
+        VALUES (:clan_id, :guild_id, :guild_name, :bot_user_id, :bot_role_id, :bot_role_name, :validated_at, :status, :message)
+        ON DUPLICATE KEY UPDATE guild_name_cache = VALUES(guild_name_cache), bot_user_id = VALUES(bot_user_id), bot_role_id = VALUES(bot_role_id), bot_role_name_cache = VALUES(bot_role_name_cache), last_validation_at = VALUES(last_validation_at), validation_status = VALUES(validation_status), validation_message = VALUES(validation_message)');
 
-    $stmt = db()->prepare('SELECT discord_role_id, discord_role_name_cache FROM rs_rank_mappings WHERE clan_id = ? AND discord_role_id IS NOT NULL');
-    $stmt->execute([(int)env('CLAN_ID', '1')]);
-    foreach ($stmt->fetchAll() as $row) {
-        foreach (($summary['roles'] ?? []) as $role) {
-            if ((string)$role['id'] === (string)$row['discord_role_id'] && (int)$role['position'] >= $botHighestPosition) {
-                $problemRoles[] = $role['name'];
-            }
-        }
-    }
-
-    if ($problemRoles) {
-        $msg = 'Bot hierarchy invalid. Move the bot role above: ' . implode(', ', array_unique($problemRoles));
-        $upsert = db()->prepare('INSERT INTO guild_settings (clan_id, discord_guild_id, guild_name_cache, bot_user_id, bot_role_id, bot_role_name_cache, last_validation_at, validation_status, validation_message)
-            VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)
-            ON DUPLICATE KEY UPDATE guild_name_cache = VALUES(guild_name_cache), bot_user_id = VALUES(bot_user_id), bot_role_id = VALUES(bot_role_id), bot_role_name_cache = VALUES(bot_role_name_cache), last_validation_at = NOW(), validation_status = VALUES(validation_status), validation_message = VALUES(validation_message)');
-        $upsert->execute([
-            (int)env('CLAN_ID', '1'),
-            (string)($summary['guild']['id'] ?? env('DISCORD_GUILD_ID', '')),
-            (string)($summary['guild']['name'] ?? ''),
-            (string)($summary['bot']['user_id'] ?? ''),
-            (string)($summary['bot']['highest_role']['id'] ?? ''),
-            (string)($summary['bot']['highest_role']['name'] ?? ''),
-            'error',
-            $msg,
-        ]);
-    } else {
-        $upsert = db()->prepare('INSERT INTO guild_settings (clan_id, discord_guild_id, guild_name_cache, bot_user_id, bot_role_id, bot_role_name_cache, last_validation_at, validation_status, validation_message)
-            VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)
-            ON DUPLICATE KEY UPDATE guild_name_cache = VALUES(guild_name_cache), bot_user_id = VALUES(bot_user_id), bot_role_id = VALUES(bot_role_id), bot_role_name_cache = VALUES(bot_role_name_cache), last_validation_at = NOW(), validation_status = VALUES(validation_status), validation_message = VALUES(validation_message)');
-        $upsert->execute([
-            (int)env('CLAN_ID', '1'),
-            (string)($summary['guild']['id'] ?? env('DISCORD_GUILD_ID', '')),
-            (string)($summary['guild']['name'] ?? ''),
-            (string)($summary['bot']['user_id'] ?? ''),
-            (string)($summary['bot']['highest_role']['id'] ?? ''),
-            (string)($summary['bot']['highest_role']['name'] ?? ''),
-            'ok',
-            'Bot hierarchy check passed.',
-        ]);
-    }
+    $botHighestRoleId = $status['bot_highest_role']['id'] ?? null;
+    $stmt->execute([
+        'clan_id' => (int)env('CLAN_ID', '1'),
+        'guild_id' => $guildId,
+        'guild_name' => (string)($status['guild']['name'] ?? ''),
+        'bot_user_id' => (string)($status['bot_user']['id'] ?? ''),
+        'bot_role_id' => $botHighestRoleId,
+        'bot_role_name' => $botHighestRoleId ? (string)($status['role_map'][$botHighestRoleId]['name'] ?? '') : null,
+        'validated_at' => now_utc(),
+        'status' => $status['ok'] ? 'ok' : 'blocked',
+        'message' => implode(' ', $status['messages']),
+    ]);
 } catch (Throwable $e) {
-    $error = $e->getMessage();
+    $errorMessage = $e->getMessage();
 }
-
-$settings = db()->prepare('SELECT * FROM guild_settings WHERE clan_id = ? LIMIT 1');
-$settings->execute([(int)env('CLAN_ID', '1')]);
-$guildSettings = $settings->fetch() ?: null;
 
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
-    <h2>Dashboard</h2>
-    <p class="muted">This page checks bot readiness and Discord guild hierarchy before role management is enabled.</p>
+    <h2>Server Readiness</h2>
+    <p class="muted">This checks the bot installation, guild access and role hierarchy directly through Discord's REST API using the bot token in your <code>.env</code>.</p>
 </div>
 
-<?php if ($error): ?>
+<?php if ($errorMessage): ?>
     <div class="card">
-        <h3>Bot Service Error</h3>
-        <p><?= h($error) ?></p>
+        <span class="status bad">Error</span>
+        <p><?= h($errorMessage) ?></p>
     </div>
-<?php elseif ($summary): ?>
-    <div class="grid-2">
+<?php elseif ($status): ?>
+    <div class="grid two">
         <div class="card">
-            <h3>Guild Status</h3>
-            <p><strong>Guild:</strong> <?= h($summary['guild']['name'] ?? '') ?></p>
-            <p><strong>Guild ID:</strong> <?= h($summary['guild']['id'] ?? '') ?></p>
-            <p><strong>Members:</strong> <?= h((string)($summary['guild']['member_count'] ?? '0')) ?></p>
+            <h3>Guild</h3>
+            <table>
+                <tr><th>Server</th><td><?= h((string)$status['guild']['name']) ?></td></tr>
+                <tr><th>Guild ID</th><td><?= h((string)$status['guild']['id']) ?></td></tr>
+                <tr><th>Validation</th><td><span class="status <?= $status['ok'] ? 'ok' : 'bad' ?>"><?= $status['ok'] ? 'Ready' : 'Blocked' ?></span></td></tr>
+                <tr><th>Last check</th><td><?= h(now_utc()) ?> UTC</td></tr>
+            </table>
         </div>
         <div class="card">
-            <h3>Bot Status</h3>
-            <p><strong>Bot:</strong> <?= h($summary['bot']['username'] ?? '') ?></p>
-            <p><strong>Highest Role:</strong> <?= h($summary['bot']['highest_role']['name'] ?? 'Unknown') ?></p>
-            <p><strong>Role Position:</strong> <?= h((string)($summary['bot']['highest_role']['position'] ?? '')) ?></p>
+            <h3>Bot</h3>
+            <table>
+                <tr><th>Bot User</th><td><?= h((string)($status['bot_user']['username'] ?? 'Unknown')) ?></td></tr>
+                <tr><th>Bot ID</th><td><?= h((string)($status['bot_user']['id'] ?? '')) ?></td></tr>
+                <tr><th>Highest Bot Role</th><td><?= h((string)($status['role_map'][$status['bot_highest_role']['id'] ?? '']['name'] ?? 'Unknown')) ?></td></tr>
+                <tr><th>Highest Server Role</th><td><?= h((string)($status['max_server_role']['name'] ?? 'Unknown')) ?></td></tr>
+            </table>
         </div>
     </div>
 
     <div class="card">
-        <h3>Validation Result</h3>
-        <?php $status = (string)($guildSettings['validation_status'] ?? 'unknown'); ?>
-        <p>
-            <?php if ($status === 'ok'): ?>
-                <span class="badge ok">Ready</span>
-            <?php elseif ($status === 'error'): ?>
-                <span class="badge bad">Action Required</span>
-            <?php else: ?>
-                <span class="badge warn">Unknown</span>
-            <?php endif; ?>
-        </p>
-        <p><?= h($guildSettings['validation_message'] ?? 'No validation result recorded.') ?></p>
-        <p class="small muted">If the bot role is not above the roles it must manage, Discord will reject role assignments even if the bot has broad permissions.</p>
-    </div>
-
-    <div class="card">
-        <h3>Current Discord Roles</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Role</th>
-                    <th>Position</th>
-                    <th>Managed</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach (($summary['roles'] ?? []) as $role): ?>
-                <tr>
-                    <td><?= h($role['name']) ?></td>
-                    <td><?= h((string)$role['position']) ?></td>
-                    <td><?= !empty($role['managed']) ? 'Yes' : 'No' ?></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
+        <h3>Outcome</h3>
+        <?php if ($status['ok']): ?>
+            <p><span class="status ok">OK</span> The bot role is high enough and the server is ready for Phase 1 administration.</p>
+        <?php else: ?>
+            <p><span class="status bad">Action Required</span> The bot role must be moved higher before mappings can be relied on.</p>
+            <ul>
+                <?php foreach ($status['messages'] as $message): ?>
+                    <li><?= h($message) ?></li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
     </div>
 <?php endif; ?>
-<?php require_once __DIR__ . '/../../app/views/footer.php';
+<?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

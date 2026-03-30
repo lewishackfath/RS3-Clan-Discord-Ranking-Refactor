@@ -3,63 +3,62 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../app/config/bootstrap.php';
 require_login();
 
-$roleResponse = bot_service_request('/guild/summary');
-$roles = (($roleResponse['status'] ?? 500) === 200 && is_array($roleResponse['json'])) ? ($roleResponse['json']['roles'] ?? []) : [];
+$pdo = db();
+$guildId = (string)env('DISCORD_GUILD_ID', '');
+$clanId = (int)env('CLAN_ID', '1');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
-    $rankRoles = $_POST['rank_role'] ?? [];
-    $createRoleNames = $_POST['create_role_name'] ?? [];
-    $enabled = $_POST['is_enabled'] ?? [];
+    try {
+        $roles = discord_get_guild_roles($guildId);
+        $roleMap = discord_role_map($roles);
+        $selectedRoles = $_POST['discord_role_id'] ?? [];
+        $newRoleNames = $_POST['new_role_name'] ?? [];
+        $enabledRows = $_POST['is_enabled'] ?? [];
 
-    $stmt = db()->prepare('INSERT INTO rs_rank_mappings (clan_id, rs_rank_name, discord_role_id, discord_role_name_cache, is_enabled)
-        VALUES (?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE discord_role_id = VALUES(discord_role_id), discord_role_name_cache = VALUES(discord_role_name_cache), is_enabled = VALUES(is_enabled), updated_at = CURRENT_TIMESTAMP');
+        $stmt = $pdo->prepare('UPDATE rs_rank_mappings SET discord_role_id = :role_id, discord_role_name_cache = :role_name, is_enabled = :is_enabled WHERE clan_id = :clan_id AND rs_rank_name = :rank_name');
 
-    foreach ($rankRoles as $rankName => $roleId) {
-        $roleId = trim((string)$roleId);
-        $roleName = null;
+        foreach ($selectedRoles as $rankName => $roleId) {
+            $rankName = (string)$rankName;
+            $roleId = trim((string)$roleId);
+            $newRoleName = trim((string)($newRoleNames[$rankName] ?? ''));
+            $isEnabled = isset($enabledRows[$rankName]) ? 1 : 0;
 
-        $requestedRoleName = trim((string)($createRoleNames[$rankName] ?? ''));
-        if ($requestedRoleName !== '') {
-            $createResponse = bot_service_request('/guild/roles', 'POST', ['name' => $requestedRoleName]);
-            if (($createResponse['status'] ?? 500) === 201 && is_array($createResponse['json'])) {
-                $roleId = (string)$createResponse['json']['id'];
-                $roleName = (string)$createResponse['json']['name'];
-                $roles[] = $createResponse['json'];
-            } else {
-                throw new RuntimeException('Failed to create Discord role for ' . $rankName);
+            if ($roleId === '' && $newRoleName !== '') {
+                $created = discord_create_role($guildId, $newRoleName);
+                $roleId = (string)$created['id'];
+                $roleMap[$roleId] = $created;
             }
+
+            $stmt->execute([
+                'role_id' => $roleId !== '' ? $roleId : null,
+                'role_name' => $roleId !== '' ? (string)($roleMap[$roleId]['name'] ?? '') : null,
+                'is_enabled' => $isEnabled,
+                'clan_id' => $clanId,
+                'rank_name' => $rankName,
+            ]);
         }
 
-        foreach ($roles as $role) {
-            if ((string)$role['id'] === $roleId) {
-                $roleName = (string)$role['name'];
-                break;
-            }
-        }
-        $stmt->execute([
-            (int)env('CLAN_ID', '1'),
-            (string)$rankName,
-            $roleId !== '' ? $roleId : null,
-            $roleName,
-            isset($enabled[$rankName]) ? 1 : 0,
-        ]);
+        flash('success', 'Role mappings saved.');
+    } catch (Throwable $e) {
+        flash('error', $e->getMessage());
     }
 
-    flash('success', 'Role mappings saved.');
     redirect('/admin/role-mappings.php');
 }
 
-$stmt = db()->prepare('SELECT * FROM rs_rank_mappings WHERE clan_id = ? ORDER BY FIELD(rs_rank_name, "Recruit", "Corporal", "Sergeant", "Lieutenant", "Captain", "General", "Coordinator", "Overseer", "Deputy Owner", "Owner"), rs_rank_name');
-$stmt->execute([(int)env('CLAN_ID', '1')]);
-$mappings = $stmt->fetchAll();
+$discordRoles = discord_get_guild_roles($guildId);
+usort($discordRoles, static fn(array $a, array $b): int => (int)$b['position'] <=> (int)$a['position']);
+
+$stmt = $pdo->prepare('SELECT * FROM rs_rank_mappings WHERE clan_id = :clan_id ORDER BY id ASC');
+$stmt->execute(['clan_id' => $clanId]);
+$rankMappings = $stmt->fetchAll();
 
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
-    <h2>RS Rank to Discord Role Mapping</h2>
-    <p class="muted">Map each RuneScape clan rank to a Discord role. These mappings are stored per clan.</p>
+    <h2>RuneScape Rank to Discord Role Mapping</h2>
+    <p class="muted">Each clan rank can point to an existing server role or a brand new role that will be created on save.</p>
 </div>
 
 <form method="post" class="card">
@@ -68,38 +67,32 @@ require_once __DIR__ . '/../../app/views/header.php';
         <thead>
             <tr>
                 <th>RS Rank</th>
-                <th>Discord Role</th>
-                <th>Create New Role</th>
+                <th>Existing Role</th>
+                <th>Or Create New Role</th>
                 <th>Enabled</th>
             </tr>
         </thead>
         <tbody>
-        <?php foreach ($mappings as $mapping): ?>
+        <?php foreach ($rankMappings as $row): ?>
             <tr>
+                <td><strong><?= h((string)$row['rs_rank_name']) ?></strong></td>
                 <td>
-                    <strong><?= h($mapping['rs_rank_name']) ?></strong>
-                </td>
-                <td>
-                    <select name="rank_role[<?= h($mapping['rs_rank_name']) ?>]">
+                    <select name="discord_role_id[<?= h((string)$row['rs_rank_name']) ?>]">
                         <option value="">-- No role selected --</option>
-                        <?php foreach ($roles as $role): ?>
-                            <option value="<?= h($role['id']) ?>" <?= (string)$mapping['discord_role_id'] === (string)$role['id'] ? 'selected' : '' ?>>
-                                <?= h($role['name']) ?>
+                        <?php foreach ($discordRoles as $role): ?>
+                            <?php if ((string)$role['name'] === '@everyone') continue; ?>
+                            <option value="<?= h((string)$role['id']) ?>" <?= (string)($row['discord_role_id'] ?? '') === (string)$role['id'] ? 'selected' : '' ?>>
+                                <?= h((string)$role['name']) ?> (position <?= h((string)$role['position']) ?>)
                             </option>
                         <?php endforeach; ?>
                     </select>
                 </td>
-                <td><input type="text" name="create_role_name[<?= h($mapping['rs_rank_name']) ?>]" placeholder="Optional new role name"></td>
-                <td>
-                    <label>
-                        <input type="checkbox" name="is_enabled[<?= h($mapping['rs_rank_name']) ?>]" value="1" <?= !empty($mapping['is_enabled']) ? 'checked' : '' ?>>
-                        Active
-                    </label>
-                </td>
+                <td><input type="text" name="new_role_name[<?= h((string)$row['rs_rank_name']) ?>]" placeholder="Create only if existing role left blank"></td>
+                <td><label><input type="checkbox" name="is_enabled[<?= h((string)$row['rs_rank_name']) ?>]" <?= (int)$row['is_enabled'] === 1 ? 'checked' : '' ?>> Enabled</label></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
-    <p style="margin-top: 16px;"><button class="btn-primary" type="submit">Save Role Mappings</button></p>
+    <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Mappings</button></p>
 </form>
-<?php require_once __DIR__ . '/../../app/views/footer.php';
+<?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

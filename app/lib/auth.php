@@ -13,28 +13,33 @@ function current_admin(): ?array
     return $_SESSION['admin_user'] ?? null;
 }
 
-function current_admin_can_manage(array $guildMemberRoleIds): bool
+function clear_admin_session(): void
+{
+    unset($_SESSION['admin_user'], $_SESSION['oauth_access_token']);
+}
+
+function is_admin_authorised(array $guildMember, array $guildRoles): bool
 {
     $admin = current_admin();
     if (!$admin) {
         return false;
     }
 
-    $allowedUsers = csv_ids(env('ADMIN_DISCORD_USER_IDS', ''));
-    if ($allowedUsers && in_array((string)$admin['id'], $allowedUsers, true)) {
+    $userId = (string)($admin['id'] ?? '');
+    $allowedUsers = csv_ids((string)env('ADMIN_DISCORD_USER_IDS', ''));
+    if ($allowedUsers && in_array($userId, $allowedUsers, true)) {
         return true;
     }
 
-    $allowedRoles = csv_ids(env('ADMIN_DISCORD_ROLE_IDS', ''));
-    if (!$allowedRoles) {
-        return true;
-    }
-
-    foreach ($guildMemberRoleIds as $roleId) {
-        if (in_array((string)$roleId, $allowedRoles, true)) {
-            return true;
+    $allowedRoles = csv_ids((string)env('ADMIN_DISCORD_ROLE_IDS', ''));
+    if ($allowedRoles) {
+        foreach (($guildMember['roles'] ?? []) as $roleId) {
+            if (in_array((string)$roleId, $allowedRoles, true)) {
+                return true;
+            }
         }
+        return false;
     }
 
-    return false;
+    return true;
 }
