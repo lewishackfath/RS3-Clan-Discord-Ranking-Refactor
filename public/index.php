@@ -8,8 +8,41 @@ use App\Support\Autoloader;
 
 $basePath = dirname(__DIR__);
 
-require $basePath . '/app/Support/helpers.php';
-require $basePath . '/app/Support/Autoloader.php';
+$helpersPath = $basePath . '/app/Support/helpers.php';
+$autoloaderPath = $basePath . '/app/Support/Autoloader.php';
+
+if (is_file($helpersPath)) {
+    require_once $helpersPath;
+} else {
+    if (!function_exists('redirect')) {
+        function redirect(string $url): never
+        {
+            header('Location: ' . $url);
+            exit;
+        }
+    }
+    if (!function_exists('e')) {
+        function e(?string $value): string
+        {
+            return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        }
+    }
+    if (!function_exists('base_path')) {
+        function base_path(string $path = ''): string
+        {
+            $base = dirname(__DIR__);
+            return $path !== '' ? $base . '/' . ltrim($path, '/') : $base;
+        }
+    }
+}
+
+if (!is_file($autoloaderPath)) {
+    http_response_code(500);
+    echo 'Missing required file: app/Support/Autoloader.php';
+    exit;
+}
+
+require_once $autoloaderPath;
 
 Autoloader::register($basePath);
 

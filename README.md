@@ -27,3 +27,8 @@ That token is intentionally a prep step for the upcoming Discord OAuth claim flo
 
 ## Important
 This zip is a clean Phase 2 package. If your current Phase 1 skeleton already has overlapping files, merge carefully or deploy this as the refreshed codebase for the next step.
+
+
+## Packaging note
+This zip now ships with files at the archive root so you can extract directly into your web root.
+If your host merges folders instead of replacing them, ensure `app/Support/helpers.php` and `app/Support/Autoloader.php` are present after extraction.
