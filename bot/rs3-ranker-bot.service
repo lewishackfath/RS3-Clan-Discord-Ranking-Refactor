@@ -1,0 +1,15 @@
+[Unit]
+Description=RS3 Clan Discord Ranker Bot
+After=network.target
+
+[Service]
+Type=simple
+User=bitnami
+WorkingDirectory=/opt/bitnami/projects/rs3-clan-ranker/bot
+ExecStart=/usr/bin/node /opt/bitnami/projects/rs3-clan-ranker/bot/src/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
