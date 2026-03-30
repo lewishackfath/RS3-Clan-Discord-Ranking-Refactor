@@ -8,6 +8,7 @@ require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/auth.php';
 require_once __DIR__ . '/../lib/discord_api.php';
+require_once __DIR__ . '/../lib/runescape_clan_api.php';
 
 $timezone = env('TIMEZONE', 'Australia/Sydney') ?: 'Australia/Sydney';
 date_default_timezone_set($timezone);

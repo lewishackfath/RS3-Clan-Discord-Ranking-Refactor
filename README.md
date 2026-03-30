@@ -47,3 +47,11 @@ This patch pack keeps the PHP-only architecture and fixes the first-round setup/
 - This is still Phase 1 only. It does not perform automated role sync jobs yet.
 - If your guild is large, the user mappings page may take longer because it reads guild members directly from Discord.
 - The `Clan Members` page exists so you can seed and maintain the clan member list without needing another tool first.
+
+## Phase 1.2 import update
+
+- Added direct RuneScape clan roster import from `members_lite.ws`
+- New `CLAN_NAME` setting in `.env`
+- The `Clan Members` page can now import the live clan roster and mark missing members inactive
+- Import parsing reuses the hardened RSN cleanup and normalisation approach from your existing sync logic
+- Safety guard: if the API parses 0 members, no database writes are made
