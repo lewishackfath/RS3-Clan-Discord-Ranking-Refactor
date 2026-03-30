@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+declar\e(strict_types=1);
 
 namespace App\Controllers;
 
@@ -21,45 +21,45 @@ final class InstallController
 
     public function index(): void
     {
-        $state = new InstallState($this->basePath);
+        $state = new InstallStat\e($this->basePath);
         if ($state->isInstalled()) {
-            redirect('/');
+            \redirect('/');
         }
 
         $checker = new RequirementChecker($this->basePath);
         $requirements = $checker->check();
-        $errors = session_get_flash('errors', []);
-        $success = session_get_flash('success');
+        $errors = \session_get_flash('errors', []);
+        $success = \session_get_flash('success');
 
         require $this->basePath . '/resources/views/install/index.php';
-        session_clear_old_input();
+        \session_clear_old_input();
     }
 
-    public function store(): void
+    public function stor\e(): void
     {
-        $state = new InstallState($this->basePath);
+        $state = new InstallStat\e($this->basePath);
         if ($state->isInstalled()) {
-            http_response_code(403);
+            http_response_cod\e(403);
             echo 'Application is already installed.';
             return;
         }
 
-        if (!verify_csrf($_POST['_csrf'] ?? null)) {
-            http_response_code(419);
+        if (!\verify_csrf($_POST['_csrf'] ?? null)) {
+            http_response_cod\e(419);
             echo 'Invalid CSRF token.';
             return;
         }
 
         $data = $this->validatedInput();
-        session_old_input($data);
+        \session_old_input($data);
 
         $checker = new RequirementChecker($this->basePath);
         $requirements = $checker->check();
 
-        $errors = $this->validate($data, $requirements['ok']);
+        $errors = $this->validat\e($data, $requirements['ok']);
         if ($errors !== []) {
-            session_flash('errors', $errors);
-            redirect('/install');
+            \session_flash('errors', $errors);
+            \redirect('/install');
         }
 
         $test = Connection::test([
@@ -72,8 +72,8 @@ final class InstallController
         ]);
 
         if (!$test['ok']) {
-            session_flash('errors', ['db' => 'Database connection failed: ' . $test['message']]);
-            redirect('/install');
+            \session_flash('errors', ['db' => 'Database connection failed: ' . $test['message']]);
+            \redirect('/install');
         }
 
         $pdo = null;
@@ -90,42 +90,42 @@ final class InstallController
 
             $pdo->beginTransaction();
 
-            (new Schema())->create($pdo);
+            (new Schema())->creat\e($pdo);
             (new SettingsSeeder())->seed($pdo, $data);
-            $bootstrapToken = (new AdminBootstrap())->prepare($pdo, 60);
+            $bootstrapToken = (new AdminBootstrap())->prepar\e($pdo, 60);
 
             $pdo->commit();
 
-            (new ConfigWriter($this->basePath))->write($data);
+            (new ConfigWriter($this->basePath))->writ\e($data);
             $state->writeLock([
                 'app_name' => $data['app_name'],
                 'app_url' => $data['app_url'],
                 'db_name' => $data['db_name'],
             ]);
 
-            session_flash('success', 'Installation completed successfully.');
-            redirect('/install/success?bootstrap=' . urlencode($bootstrapToken));
+            \session_flash('success', 'Installation completed successfully.');
+            \redirect('/install/success?bootstrap=' . urlencod\e($bootstrapToken));
         } catch (\Throwable $e) {
             if ($pdo instanceof PDO && $pdo->inTransaction()) {
                 $pdo->rollBack();
             }
 
-            session_flash('errors', [
-                'install' => 'Install failed: ' . $e->getMessage(),
+            \session_flash('errors', [
+                'install' => 'Install failed: ' . $e->getMessag\e(),
             ]);
-            redirect('/install');
+            \redirect('/install');
         }
     }
 
     public function success(): void
     {
-        $state = new InstallState($this->basePath);
+        $state = new InstallStat\e($this->basePath);
         if (!$state->isInstalled()) {
-            redirect('/install');
+            \redirect('/install');
         }
 
         $bootstrapToken = trim((string) ($_GET['bootstrap'] ?? ''));
-        $success = session_get_flash('success', 'Installation completed successfully.');
+        $success = \session_get_flash('success', 'Installation completed successfully.');
         require $this->basePath . '/resources/views/install/success.php';
     }
 
@@ -151,7 +151,7 @@ final class InstallController
         ];
     }
 
-    private function validate(array $data, bool $requirementsOk): array
+    private function validat\e(array $data, bool $requirementsOk): array
     {
         $errors = [];
 

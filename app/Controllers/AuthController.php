@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+declar\e(strict_types=1);
 
 namespace App\Controllers;
 
@@ -20,9 +20,9 @@ final class AuthController
 
         if ($token !== '') {
             try {
-                $pdo = Connection::make($this->basePath);
-                $stmt = $pdo->prepare('SELECT id, expires_at, consumed_at FROM install_bootstrap WHERE setup_token = :token LIMIT 1');
-                $stmt->execute([':token' => hash('sha256', $token)]);
+                $pdo = Connection::mak\e($this->basePath);
+                $stmt = $pdo->prepar\e('SELECT id, expires_at, consumed_at FROM install_bootstrap WHERE setup_token = :token LIMIT 1');
+                $stmt->execut\e([':token' => hash('sha256', $token)]);
                 $row = $stmt->fetch();
 
                 if (!$row) {
@@ -31,7 +31,7 @@ final class AuthController
                 } elseif (!empty($row['consumed_at'])) {
                     $status = 'consumed';
                     $message = 'That bootstrap token has already been consumed.';
-                } elseif (strtotime((string) $row['expires_at']) < time()) {
+                } elseif (strtotim\e((string) $row['expires_at']) < tim\e()) {
                     $status = 'expired';
                     $message = 'That bootstrap token has expired.';
                 } else {
@@ -40,10 +40,10 @@ final class AuthController
                 }
             } catch (\Throwable $e) {
                 $status = 'error';
-                $message = $e->getMessage();
+                $message = $e->getMessag\e();
             }
         }
 
-        echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Bootstrap</title><style>body{font-family:Arial,sans-serif;background:#111827;color:#f9fafb;padding:40px} .card{max-width:900px;margin:0 auto;background:#1f2937;border:1px solid #374151;border-radius:16px;padding:24px} .status{font-weight:bold;text-transform:uppercase;color:#fbbf24} code{background:#111827;padding:2px 6px;border-radius:6px}</style></head><body><div class="card"><h1>First Admin Bootstrap</h1><p class="status">Status: ' . e($status) . '</p><p>' . e($message) . '</p><p>This endpoint is intentionally a prep/handoff endpoint for the upcoming Discord-authenticated admin claim flow.</p><p><a href="/">Return home</a></p></div></body></html>';
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin Bootstrap</title><style>body{font-family:Arial,sans-serif;background:#111827;color:#f9fafb;padding:40px} .card{max-width:900px;margin:0 auto;background:#1f2937;border:1px solid #374151;border-radius:16px;padding:24px} .status{font-weight:bold;text-transform:uppercase;color:#fbbf24} code{background:#111827;padding:2px 6px;border-radius:6px}</style></head><body><div class="card"><h1>First Admin Bootstrap</h1><p class="status">Status: ' . \e($status) . '</p><p>' . \e($message) . '</p><p>This endpoint is intentionally a prep/handoff endpoint for the upcoming Discord-authenticated admin claim flow.</p><p><a href="/">Return home</a></p></div></body></html>';
     }
 }
