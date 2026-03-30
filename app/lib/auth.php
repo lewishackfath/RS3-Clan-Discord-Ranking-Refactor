@@ -18,14 +18,18 @@ function clear_admin_session(): void
     unset($_SESSION['admin_user'], $_SESSION['oauth_access_token']);
 }
 
-function is_admin_authorised(array $guildMember, array $guildRoles): bool
+function is_admin_authorised(array $guildMember, array $guildRoles, ?string $candidateUserId = null): bool
 {
-    $admin = current_admin();
-    if (!$admin) {
-        return false;
+    $userId = $candidateUserId;
+
+    if ($userId === null || $userId === '') {
+        $admin = current_admin();
+        if (!$admin) {
+            return false;
+        }
+        $userId = (string)($admin['id'] ?? '');
     }
 
-    $userId = (string)($admin['id'] ?? '');
     $allowedUsers = csv_ids((string)env('ADMIN_DISCORD_USER_IDS', ''));
     if ($allowedUsers && in_array($userId, $allowedUsers, true)) {
         return true;
