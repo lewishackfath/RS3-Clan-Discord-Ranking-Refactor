@@ -3,19 +3,34 @@
 declare(strict_types=1);
 
 use App\Bootstrap;
-use App\Controllers\HomeController;
-use App\Controllers\InstallController;
-use App\Http\Middleware\InstallGuard;
-use App\Http\Request;
+use App\Install\InstallState;
+use App\Support\Autoloader;
 
-$app = require dirname(__DIR__) . '/bootstrap/app.php';
-assert($app instanceof Bootstrap);
+$basePath = dirname(__DIR__);
 
-$guard = new InstallGuard($app);
-$guard->enforce();
+require $basePath . '/app/Support/helpers.php';
+require $basePath . '/app/Support/Autoloader.php';
 
-$router = $app->router();
-$router->get('/', [HomeController::class, 'index']);
-$router->get('/install', [InstallController::class, 'index']);
-$router->post('/install', [InstallController::class, 'store']);
-$router->dispatch(new Request());
+Autoloader::register($basePath);
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+
+$bootstrap = new Bootstrap($basePath);
+$installState = new InstallState($bootstrap->basePath());
+
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+$isInstallRoute = str_starts_with($path, '/install');
+
+if (!$installState->isInstalled() && !$isInstallRoute) {
+    redirect('/install');
+}
+
+if ($installState->isInstalled() && $path === '/install') {
+    redirect('/');
+}
+
+$router = $bootstrap->router();
+$router->dispatch($method, $path);
