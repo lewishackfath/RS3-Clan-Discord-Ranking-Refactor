@@ -73,18 +73,20 @@ if (!function_exists('session_clear_old_input')) {
     }
 }
 
-if (!function_exists('redirect')) {
-    function redirect(string $location): never
+if (!function_exists('verify_csrf')) {
+    function verify_csrf(?string $token): bool
     {
-        header('Location: ' . $location);
-        exit;
+        return is_string($token)
+            && isset($_SESSION['_csrf'])
+            && is_string($_SESSION['_csrf'])
+            && hash_equals($_SESSION['_csrf'], $token);
     }
 }
 
 if (!function_exists('csrf_token')) {
     function csrf_token(): string
     {
-        if (!isset($_SESSION['_csrf'])) {
+        if (!isset($_SESSION['_csrf']) || !is_string($_SESSION['_csrf']) || $_SESSION['_csrf'] == '') {
             $_SESSION['_csrf'] = bin2hex(random_bytes(32));
         }
 
@@ -92,16 +94,10 @@ if (!function_exists('csrf_token')) {
     }
 }
 
-if (!function_exists('csrf_field')) {
-    function csrf_field(): string
+if (!function_exists('redirect')) {
+    function redirect(string $location): never
     {
-        return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
-    }
-}
-
-if (!function_exists('verify_csrf')) {
-    function verify_csrf(?string $token): bool
-    {
-        return is_string($token) && isset($_SESSION['_csrf']) && hash_equals($_SESSION['_csrf'], $token);
+        header('Location: ' . $location);
+        exit;
     }
 }

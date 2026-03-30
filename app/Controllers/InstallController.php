@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+if (!\function_exists('session_get_flash')) {
+    $__helpers = dirname(__DIR__, 2) . '/app/Support/helpers.php';
+    if (is_file($__helpers)) {
+        require_once $__helpers;
+    }
+}
+
 use App\Database\Connection;
 use App\Database\Schema;
 use App\Install\AdminBootstrap;
