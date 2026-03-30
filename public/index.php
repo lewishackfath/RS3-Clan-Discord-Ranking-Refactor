@@ -111,6 +111,13 @@ if (!function_exists('csrf_token')) {
     }
 }
 
+if (!function_exists('csrf_field')) {
+    function csrf_field(): string
+    {
+        return '<input type="hidden" name="_token" value="' . e(csrf_token()) . '">';
+    }
+}
+
 if (!function_exists('redirect')) {
     function redirect(string $url): never
     {

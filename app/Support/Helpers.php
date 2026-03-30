@@ -101,3 +101,11 @@ if (!function_exists('redirect')) {
         exit;
     }
 }
+
+
+if (!function_exists('csrf_field')) {
+    function csrf_field(): string
+    {
+        return '<input type="hidden" name="_token" value="' . e(csrf_token()) . '">';
+    }
+}
