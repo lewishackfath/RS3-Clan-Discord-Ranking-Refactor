@@ -14,7 +14,6 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
     try {
         $action = (string)($_POST['action'] ?? '');
-
         if ($action === 'import_from_api') {
             $summary = import_runescape_clan_members($pdo, $clanId, $clanName);
             $_SESSION['last_clan_import_summary'] = $summary;
@@ -23,48 +22,6 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 (int)$summary['fetched'],
                 (string)$summary['clan_name']
             ));
-        } elseif ($action === 'create') {
-            $rsn = trim((string)($_POST['rsn'] ?? ''));
-            $rankName = trim((string)($_POST['rank_name'] ?? ''));
-            if ($rsn === '') {
-                throw new RuntimeException('RSN is required.');
-            }
-
-            $stmt = $pdo->prepare('INSERT INTO clan_members (clan_id, rsn, rsn_normalised, rank_name, is_active) VALUES (:clan_id, :rsn, :rsn_normalised, :rank_name, :is_active)');
-            $stmt->execute([
-                'clan_id' => $clanId,
-                'rsn' => $rsn,
-                'rsn_normalised' => normalise_rsn($rsn),
-                'rank_name' => $rankName !== '' ? $rankName : null,
-                'is_active' => isset($_POST['is_active']) ? 1 : 0,
-            ]);
-            flash('success', 'Clan member added.');
-        } elseif ($action === 'save_single') {
-            $memberId = (int)($_POST['member_id'] ?? 0);
-            $rsn = trim((string)($_POST['rsn'] ?? ''));
-            $rankName = trim((string)($_POST['rank_name'] ?? ''));
-            if ($memberId <= 0 || $rsn === '') {
-                throw new RuntimeException('Member ID and RSN are required.');
-            }
-
-            $stmt = $pdo->prepare('UPDATE clan_members SET rsn = :rsn, rsn_normalised = :rsn_normalised, rank_name = :rank_name, is_active = :is_active WHERE id = :id AND clan_id = :clan_id');
-            $stmt->execute([
-                'id' => $memberId,
-                'clan_id' => $clanId,
-                'rsn' => $rsn,
-                'rsn_normalised' => normalise_rsn($rsn),
-                'rank_name' => $rankName !== '' ? $rankName : null,
-                'is_active' => isset($_POST['is_active']) ? 1 : 0,
-            ]);
-            flash('success', 'Clan member updated.');
-        } elseif ($action === 'delete') {
-            $memberId = (int)($_POST['member_id'] ?? 0);
-            if ($memberId <= 0) {
-                throw new RuntimeException('Invalid member ID.');
-            }
-            $stmt = $pdo->prepare('DELETE FROM clan_members WHERE id = :id AND clan_id = :clan_id');
-            $stmt->execute(['id' => $memberId, 'clan_id' => $clanId]);
-            flash('success', 'Clan member deleted.');
         }
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
@@ -98,7 +55,7 @@ require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
     <h2>Clan Members</h2>
-    <p class="muted">Import the live RuneScape clan roster first, then use that member list for Discord user mapping.</p>
+    <p class="muted">RuneScape is the source of truth for RSN, rank, and active status. This page is read-only apart from importing the latest roster from the RuneScape clan API.</p>
 </div>
 
 <?php if ($missingTables): ?>
@@ -146,29 +103,8 @@ require_once __DIR__ . '/../../app/views/header.php';
 </div>
 
 <div class="card">
-    <h3>Add Clan Member Manually</h3>
-    <form method="post" class="grid two">
-        <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
-        <input type="hidden" name="action" value="create">
-        <div>
-            <label>RSN</label>
-            <input type="text" name="rsn" required>
-        </div>
-        <div>
-            <label>Rank Name</label>
-            <input type="text" name="rank_name" placeholder="Optional">
-        </div>
-        <div>
-            <label><input type="checkbox" name="is_active" checked> Active member</label>
-        </div>
-        <div>
-            <button class="btn-secondary" type="submit">Add Member</button>
-        </div>
-    </form>
-</div>
-
-<div class="card">
-    <h3>Existing Clan Members</h3>
+    <h3>Imported Clan Members</h3>
+    <p class="muted small">These values are read-only in this admin. Run a fresh import whenever the RuneScape clan roster changes.</p>
     <table>
         <thead>
             <tr>
@@ -177,32 +113,19 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <th>Rank</th>
                 <th>Status</th>
                 <th>Updated</th>
-                <th>Save</th>
-                <th>Delete</th>
             </tr>
         </thead>
         <tbody>
+        <?php if (!$members): ?>
+            <tr><td colspan="5" class="muted">No clan members have been imported yet.</td></tr>
+        <?php endif; ?>
         <?php foreach ($members as $member): ?>
             <tr>
-                <form method="post">
-                    <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
-                    <input type="hidden" name="action" value="save_single">
-                    <input type="hidden" name="member_id" value="<?= h((string)$member['id']) ?>">
-                    <td><input type="text" name="rsn" value="<?= h((string)$member['rsn']) ?>"></td>
-                    <td class="small muted"><?= h((string)$member['rsn_normalised']) ?></td>
-                    <td><input type="text" name="rank_name" value="<?= h((string)($member['rank_name'] ?? '')) ?>"></td>
-                    <td><label><input type="checkbox" name="is_active" <?= (int)$member['is_active'] === 1 ? 'checked' : '' ?>> Active</label></td>
-                    <td class="small muted"><?= h((string)$member['updated_at']) ?></td>
-                    <td><button class="btn-secondary" type="submit">Save</button></td>
-                </form>
-                <td>
-                    <form method="post" onsubmit="return confirm('Delete this clan member?');">
-                        <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
-                        <input type="hidden" name="action" value="delete">
-                        <input type="hidden" name="member_id" value="<?= h((string)$member['id']) ?>">
-                        <button class="btn-secondary" type="submit">Delete</button>
-                    </form>
-                </td>
+                <td><?= h((string)$member['rsn']) ?></td>
+                <td class="small muted mono"><?= h((string)$member['rsn_normalised']) ?></td>
+                <td><?= h((string)($member['rank_name'] ?? '')) ?: '<span class="muted">No rank</span>' ?></td>
+                <td><span class="status <?= (int)$member['is_active'] === 1 ? 'ok' : 'bad' ?>"><?= (int)$member['is_active'] === 1 ? 'Active' : 'Inactive' ?></span></td>
+                <td class="small muted"><?= h((string)$member['updated_at']) ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>

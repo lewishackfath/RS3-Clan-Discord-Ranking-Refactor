@@ -73,6 +73,8 @@ function nav_active(string $needle, string $path): string { return str_contains(
         .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
         .nowrap { white-space: nowrap; }
         .w-compact { width: 240px; }
+        .member-picker { display: grid; gap: 8px; min-width: 260px; }
+        .mapping-search { font-size: 13px; }
         @media (max-width: 980px) {
             .layout { grid-template-columns: 1fr; }
             .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }

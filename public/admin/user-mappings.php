@@ -8,27 +8,21 @@ $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
 $missingTables = require_tables($pdo, ['discord_user_mappings', 'clan_members']);
 
-function normalise_match_source(string $value): string
-{
-    return normalise_rsn($value);
-}
-
 if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
+
     try {
         $discordMembers = discord_list_guild_members($guildId);
-        $memberChoices = is_array($_POST['member_id'] ?? null) ? $_POST['member_id'] : [];
+        $memberChoices = $_POST['member_id'] ?? [];
 
-        $clanMembersStmt = $pdo->prepare('SELECT id, rsn, rank_name FROM clan_members WHERE clan_id = :clan_id');
-        $clanMembersStmt->execute(['clan_id' => $clanId]);
         $clanMembersById = [];
-        foreach ($clanMembersStmt->fetchAll() as $row) {
-            $clanMembersById[(string)$row['id']] = $row;
+        $clanStmt = $pdo->prepare('SELECT id, rsn, rank_name FROM clan_members WHERE clan_id = :clan_id AND is_active = 1');
+        $clanStmt->execute(['clan_id' => $clanId]);
+        foreach (($clanStmt->fetchAll() ?: []) as $member) {
+            $clanMembersById[(string)$member['id']] = $member;
         }
 
-        $upsert = $pdo->prepare('INSERT INTO discord_user_mappings (clan_id, discord_guild_id, discord_user_id, member_id, rsn_cache, discord_username_cache, discord_nickname_cache)
-            VALUES (:clan_id, :guild_id, :discord_user_id, :member_id, :rsn_cache, :username_cache, :nickname_cache)
-            ON DUPLICATE KEY UPDATE member_id = VALUES(member_id), rsn_cache = VALUES(rsn_cache), discord_username_cache = VALUES(discord_username_cache), discord_nickname_cache = VALUES(discord_nickname_cache)');
+        $upsert = $pdo->prepare('INSERT INTO discord_user_mappings (clan_id, discord_guild_id, discord_user_id, member_id, rsn_cache, discord_username_cache, discord_nickname_cache) VALUES (:clan_id, :guild_id, :discord_user_id, :member_id, :rsn_cache, :discord_username_cache, :discord_nickname_cache) ON DUPLICATE KEY UPDATE member_id = VALUES(member_id), rsn_cache = VALUES(rsn_cache), discord_username_cache = VALUES(discord_username_cache), discord_nickname_cache = VALUES(discord_nickname_cache)');
         $delete = $pdo->prepare('DELETE FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id AND discord_user_id = :discord_user_id');
 
         $saved = 0;
@@ -59,8 +53,8 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 'discord_user_id' => $userId,
                 'member_id' => (int)$member['id'],
                 'rsn_cache' => (string)$member['rsn'],
-                'username_cache' => (string)$summary['username'],
-                'nickname_cache' => (string)$summary['nickname'],
+                'discord_username_cache' => (string)$summary['username'],
+                'discord_nickname_cache' => (string)$summary['nickname'],
             ]);
             $saved++;
         }
@@ -240,6 +234,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             $meta = $statusMeta[$statusKey];
             $userId = (string)$discordMember['user_id'];
             $nickname = (string)$discordMember['nickname'];
+            $selectedMemberId = $manual ? (string)$manual['member_id'] : '';
         ?>
             <tr>
                 <td>
@@ -259,14 +254,30 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <?php endif; ?>
                 </td>
                 <td>
-                    <select name="member_id[<?= h($userId) ?>]">
-                        <option value="">-- No manual mapping --</option>
-                        <?php foreach ($clanMembers as $member): ?>
-                            <option value="<?= h((string)$member['id']) ?>" <?= $manual && (string)$manual['member_id'] === (string)$member['id'] ? 'selected' : '' ?>>
-                                <?= h((string)$member['rsn']) ?><?= !empty($member['rank_name']) ? ' (' . h((string)$member['rank_name']) . ')' : '' ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <div class="member-picker">
+                        <input
+                            type="text"
+                            class="mapping-search"
+                            data-target="member-select-<?= h($userId) ?>"
+                            placeholder="Search RSN or rank within dropdown"
+                            value=""
+                            autocomplete="off"
+                        >
+                        <select id="member-select-<?= h($userId) ?>" name="member_id[<?= h($userId) ?>]" class="member-select">
+                            <option value="">-- No manual mapping --</option>
+                            <?php foreach ($clanMembers as $member):
+                                $optionLabel = (string)$member['rsn'] . (!empty($member['rank_name']) ? ' (' . (string)$member['rank_name'] . ')' : '');
+                            ?>
+                                <option
+                                    value="<?= h((string)$member['id']) ?>"
+                                    data-search="<?= h(mb_strtolower($optionLabel . ' ' . (string)$member['rsn_normalised'], 'UTF-8')) ?>"
+                                    <?= $selectedMemberId === (string)$member['id'] ? 'selected' : '' ?>
+                                >
+                                    <?= h($optionLabel) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <?php if ($manual): ?>
                         <div class="small muted" style="margin-top:6px">Saved override: <?= h((string)$manual['rsn_cache']) ?></div>
                     <?php else: ?>
@@ -291,5 +302,35 @@ require_once __DIR__ . '/../../app/views/header.php';
         <button class="btn-primary" type="submit">Save User Mappings</button>
     </div>
 </form>
+
+<script>
+document.addEventListener('input', function (event) {
+    if (!event.target.classList.contains('mapping-search')) {
+        return;
+    }
+
+    const input = event.target;
+    const selectId = input.getAttribute('data-target');
+    const select = document.getElementById(selectId);
+    if (!select) {
+        return;
+    }
+
+    const term = input.value.trim().toLowerCase();
+    for (const option of select.options) {
+        if (option.value === '') {
+            option.hidden = false;
+            continue;
+        }
+        const haystack = (option.dataset.search || option.text || '').toLowerCase();
+        option.hidden = term !== '' && !haystack.includes(term);
+    }
+
+    const selected = select.options[select.selectedIndex];
+    if (selected && selected.hidden) {
+        select.value = '';
+    }
+});
+</script>
 <?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

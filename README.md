@@ -65,3 +65,9 @@ This pack improves the User Mappings page with:
 - search and status filters
 - mapping summary cards
 - better visibility into nickname normalisation
+
+
+## Patch notes
+
+- Clan Members page is now read-only for RSN, rank, and active status; RuneScape remains the source of truth.
+- User Mapping dropdowns now include a built-in search field that filters the RSN list by name, normalised RSN, or rank.
