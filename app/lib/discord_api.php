@@ -188,13 +188,23 @@ function discord_list_guild_members(string $guildId, int $limit = 1000): array
     return $members;
 }
 
-function discord_create_role(string $guildId, string $name): array
+function discord_create_role(string $guildId, string $name, array $options = []): array
 {
-    $response = discord_request('POST', '/guilds/' . rawurlencode($guildId) . '/roles', [
+    $payload = [
         'name' => $name,
-        'mentionable' => false,
-        'hoist' => false,
-    ], discord_bot_headers());
+        'mentionable' => (bool)($options['mentionable'] ?? false),
+        'hoist' => (bool)($options['hoist'] ?? false),
+    ];
+
+    if (array_key_exists('permissions', $options) && $options['permissions'] !== null && $options['permissions'] !== '') {
+        $payload['permissions'] = (string)$options['permissions'];
+    }
+
+    if (array_key_exists('color', $options) && $options['color'] !== null && $options['color'] !== '') {
+        $payload['color'] = (int)$options['color'];
+    }
+
+    $response = discord_request('POST', '/guilds/' . rawurlencode($guildId) . '/roles', $payload, discord_bot_headers());
 
     if ($response['status'] < 200 || $response['status'] >= 300 || !is_array($response['json'])) {
         throw new RuntimeException('Failed to create role. Ensure the bot has Manage Roles permission and sufficient hierarchy.');

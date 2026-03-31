@@ -110,6 +110,7 @@ function nav_active(string $needle, string $path): string { return str_contains(
             <a class="<?= nav_active('/admin/roles.php', $path) ?>" href="/admin/roles.php">Role Management</a>
             <a class="<?= nav_active('/admin/user-mappings.php', $path) ?>" href="/admin/user-mappings.php">User Mappings</a>
             <a class="<?= nav_active('/admin/discord-settings.php', $path) ?>" href="/admin/discord-settings.php">Discord Settings</a>
+            <a class="<?= nav_active('/admin/discord-role-bootstrap.php', $path) ?>" href="/admin/discord-role-bootstrap.php">Role Bootstrap</a>
             <a class="<?= nav_active('/admin/sync-preview.php', $path) ?>" href="/admin/sync-preview.php">Sync Preview</a>
             <a class="<?= nav_active('/admin/sync-history.php', $path) ?>" href="/admin/sync-history.php">Sync History</a>
         </nav>
