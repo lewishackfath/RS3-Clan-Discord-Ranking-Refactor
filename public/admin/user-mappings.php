@@ -7,6 +7,8 @@ $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
 $missingTables = require_tables($pdo, ['discord_user_mappings', 'clan_members']);
+$guildRoles = [];
+$guildRoleMap = [];
 
 if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
@@ -81,6 +83,8 @@ if (!in_array($statusFilter, $allowedStatus, true)) {
 }
 
 if (!$missingTables) {
+    $guildRoles = discord_get_guild_roles($guildId);
+    $guildRoleMap = discord_role_map($guildRoles);
     $discordMembersRaw = discord_list_guild_members($guildId);
 
     $stmt = $pdo->prepare('SELECT * FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id');
@@ -142,11 +146,37 @@ if (!$missingTables) {
             continue;
         }
 
+        $currentRoles = [];
+        foreach (($summary['roles'] ?? []) as $roleId) {
+            $role = $guildRoleMap[(string)$roleId] ?? null;
+            if (!is_array($role)) {
+                continue;
+            }
+            $roleName = (string)($role['name'] ?? '');
+            if ($roleName === '' || $roleName === '@everyone') {
+                continue;
+            }
+            $currentRoles[] = [
+                'id' => (string)$roleId,
+                'name' => $roleName,
+                'position' => (int)($role['position'] ?? 0),
+                'managed' => (bool)($role['managed'] ?? false),
+            ];
+        }
+        usort($currentRoles, static function(array $a, array $b): int {
+            $posCompare = ($b['position'] <=> $a['position']);
+            if ($posCompare !== 0) {
+                return $posCompare;
+            }
+            return strcasecmp((string)$a['name'], (string)$b['name']);
+        });
+
         $discordMembers[] = [
             'summary' => $summary,
             'manual' => $manual,
             'nickname_match' => $nicknameMatch,
             'status_key' => $statusKey,
+            'current_roles' => $currentRoles,
         ];
     }
 
@@ -224,6 +254,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             <tr>
                 <th>Discord User</th>
                 <th>Nickname</th>
+                <th>Current Roles</th>
                 <th>Saved Mapping</th>
                 <th>Nickname Match Preview</th>
                 <th>Status</th>
@@ -231,7 +262,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         </thead>
         <tbody>
         <?php if (!$discordMembers): ?>
-            <tr><td colspan="5" class="muted">No Discord members matched the current filters.</td></tr>
+            <tr><td colspan="6" class="muted">No Discord members matched the current filters.</td></tr>
         <?php endif; ?>
         <?php foreach ($discordMembers as $row):
             $discordMember = $row['summary'];
@@ -242,6 +273,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             $userId = (string)$discordMember['user_id'];
             $nickname = (string)$discordMember['nickname'];
             $selectedMemberId = $manual ? (string)$manual['member_id'] : '';
+            $currentRoles = $row['current_roles'] ?? [];
         ?>
             <tr>
                 <td>
@@ -258,6 +290,18 @@ require_once __DIR__ . '/../../app/views/header.php';
                         <div class="small muted mono">Normalised: <?= h(normalise_match_source($nickname)) ?></div>
                     <?php else: ?>
                         <span class="muted">No nickname set</span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <?php if ($currentRoles): ?>
+                        <div class="role-chip-list">
+                            <?php foreach ($currentRoles as $currentRole): ?>
+                                <span class="role-chip<?= !empty($currentRole['managed']) ? ' role-chip-managed' : '' ?>"><?= h((string)$currentRole['name']) ?></span>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="small muted" style="margin-top:6px"><?= h((string)count($currentRoles)) ?> role<?= count($currentRoles) === 1 ? '' : 's' ?></div>
+                    <?php else: ?>
+                        <span class="muted">No current roles</span>
                     <?php endif; ?>
                 </td>
                 <td>
@@ -365,5 +409,25 @@ document.addEventListener('change', function (event) {
     hidden.value = clanMemberLookup[key] || '';
 });
 </script>
+
+<style>
+.role-chip-list { display:flex; flex-wrap:wrap; gap:6px; }
+.role-chip {
+    display:inline-flex;
+    align-items:center;
+    padding:4px 8px;
+    border-radius:999px;
+    background:#1f2937;
+    border:1px solid #374151;
+    color:#e5e7eb;
+    font-size:12px;
+    line-height:1.2;
+}
+.role-chip-managed {
+    background:#1e3a8a;
+    border-color:#2563eb;
+}
+</style>
+
 <?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>
