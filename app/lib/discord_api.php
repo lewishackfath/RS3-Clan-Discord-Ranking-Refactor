@@ -274,12 +274,21 @@ function validate_bot_readiness(string $guildId, array $mappedRoleIds = [], arra
             );
         }
 
+        $botMemberRoleIds = array_map('strval', $botMember['roles'] ?? []);
         $requiredRoleIds = array_values(array_unique(array_filter(array_merge($mappedRoleIds, $botRoleFlagIds))));
         foreach ($requiredRoleIds as $roleId) {
+            $roleId = (string)$roleId;
             $role = $roleMap[$roleId] ?? null;
             if (!$role) {
                 continue;
             }
+
+            // Ignore the bot's own roles here. Discord only requires the bot to sit above
+            // target roles it is expected to manage; it does not need to sit above itself.
+            if ($roleId === (string)$botHighest['id'] || in_array($roleId, $botMemberRoleIds, true)) {
+                continue;
+            }
+
             if ((int)$role['position'] >= (int)$botHighest['position']) {
                 $ok = false;
                 $messages[] = sprintf('Bot role must sit above role "%s".', (string)$role['name']);
