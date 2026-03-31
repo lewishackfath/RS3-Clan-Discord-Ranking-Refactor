@@ -182,29 +182,31 @@ if (!$missingTables) {
             $currentRoles = preview_member_roles($currentRoleIds, $roleMap, $roleFlags);
 
             $rankName = $resolvedMember ? (string)($resolvedMember['rank_name'] ?? '') : '';
+            $resolvedIsGuest = !$resolvedMember;
             $targetRoleIds = [];
             $targetReasons = [];
-            if ($resolvedMember) {
-                $baseRowName = (strcasecmp($rankName, 'Guest') === 0) ? 'Guest' : 'Clan Member';
-                $exactMappings = $rankMappings[$rankName]['role_ids'] ?? [];
-                $baseMappings = $rankMappings[$baseRowName]['role_ids'] ?? [];
-                $exactEnabled = !empty($rankMappings[$rankName]['is_enabled']);
-                $baseEnabled = !empty($rankMappings[$baseRowName]['is_enabled']);
 
-                if ($baseEnabled) {
-                    foreach ($baseMappings as $roleId) {
-                        $targetRoleIds[] = (string)$roleId;
-                        $targetReasons[(string)$roleId] = $baseRowName;
-                    }
+            $baseRowName = $resolvedIsGuest || strcasecmp($rankName, 'Guest') === 0 ? 'Guest' : 'Clan Member';
+            $baseMappings = $rankMappings[$baseRowName]['role_ids'] ?? [];
+            $baseEnabled = !empty($rankMappings[$baseRowName]['is_enabled']);
+            if ($baseEnabled) {
+                foreach ($baseMappings as $roleId) {
+                    $targetRoleIds[] = (string)$roleId;
+                    $targetReasons[(string)$roleId] = $baseRowName;
                 }
+            }
+
+            if ($resolvedMember) {
+                $exactMappings = $rankMappings[$rankName]['role_ids'] ?? [];
+                $exactEnabled = !empty($rankMappings[$rankName]['is_enabled']);
                 if ($exactEnabled) {
                     foreach ($exactMappings as $roleId) {
                         $targetRoleIds[] = (string)$roleId;
                         $targetReasons[(string)$roleId] = $rankName;
                     }
                 }
-                $targetRoleIds = array_values(array_unique(array_filter($targetRoleIds)));
             }
+            $targetRoleIds = array_values(array_unique(array_filter($targetRoleIds)));
 
             $addRoleIds = [];
             $removeRoleIds = [];
@@ -216,12 +218,11 @@ if (!$missingTables) {
             if ($resolvedBy === 'ambiguous') {
                 $statusKey = 'ambiguous_match';
                 $issues[] = 'Multiple RuneScape clan members partially matched this Discord name. Save a manual mapping to resolve it.';
-            } elseif (!$resolvedMember) {
-                $statusKey = 'no_match';
-                $issues[] = 'No RuneScape clan member match could be resolved from a manual mapping or nickname fallback.';
             } elseif ($targetRoleIds === []) {
                 $statusKey = 'no_rank_mapping';
-                $issues[] = 'The resolved RuneScape rank does not currently produce any target Discord roles.';
+                $issues[] = $resolvedMember
+                    ? 'The resolved RuneScape rank does not currently produce any target Discord roles.'
+                    : 'No RuneScape match was resolved, and the Guest mapping does not currently produce any target Discord roles.';
             } else {
                 foreach ($targetRoleIds as $roleId) {
                     if (!in_array($roleId, $currentRoleIds, true)) {
@@ -261,6 +262,10 @@ if (!$missingTables) {
                         $blockedRoleIds[] = $roleId;
                     }
                     $removeRoleIds[] = $roleId;
+                }
+
+                if (!$resolvedMember) {
+                    $issues[] = 'No RuneScape clan member match was resolved. Preview falls back to Guest and removes non-protected managed roles.';
                 }
 
                 $blockedRoleIds = array_values(array_unique($blockedRoleIds));
@@ -436,10 +441,14 @@ require_once __DIR__ . '/../../app/views/header.php';
                             <div class="stack">
                                 <strong><?= h((string)$row['resolved_member']['rsn']) ?></strong>
                                 <div class="small muted">Rank: <?= h($row['rank_name'] !== '' ? $row['rank_name'] : 'Unknown') ?></div>
-                                <div><span class="code-badge"><?php if ($row['resolved_by'] === 'manual'): ?>Manual mapping<?php elseif ($row['resolved_by'] === 'nickname_exact'): ?>Nickname exact<?php elseif ($row['resolved_by'] === 'nickname_contains'): ?>Nickname contains RSN<?php else: ?>Nickname fallback<?php endif; ?></span></div>
+                                <div><span class="code-badge"><?php if ($row['resolved_by'] === 'manual'): ?>Manual mapping<?php elseif ($row['resolved_by'] === 'nickname_exact'): ?>Nickname exact<?php elseif ($row['resolved_by'] === 'nickname_exact_compact'): ?>Nickname exact (space-insensitive)<?php elseif ($row['resolved_by'] === 'nickname_contains'): ?>Nickname contains RSN<?php elseif ($row['resolved_by'] === 'none'): ?>Guest fallback<?php else: ?>Nickname fallback<?php endif; ?></span></div>
                             </div>
                         <?php else: ?>
-                            <span class="muted">No match</span>
+                            <div class="stack">
+                                <strong>Guest</strong>
+                                <div class="small muted">No RuneScape match resolved</div>
+                                <div><span class="code-badge">Guest fallback</span></div>
+                            </div>
                         <?php endif; ?>
                     </td>
                     <td><?= role_chip_html($row['current_roles']) ?></td>

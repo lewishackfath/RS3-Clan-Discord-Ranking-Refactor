@@ -90,17 +90,54 @@ function normalise_match_source(string $value): string
     return trim($value, '_');
 }
 
+function condensed_match_value(string $value): string
+{
+    $value = normalise_match_source($value);
+    if ($value === '') {
+        return '';
+    }
+    return str_replace('_', '', $value);
+}
+
+function nickname_match_segments(string $value): array
+{
+    $normalised = normalise_match_source($value);
+    if ($normalised === '') {
+        return [];
+    }
+
+    $segments = [$normalised => $normalised];
+    $tokens = array_values(array_filter(explode('_', $normalised), static fn(string $token): bool => $token !== ''));
+    $count = count($tokens);
+
+    for ($start = 0; $start < $count; $start++) {
+        $joined = '';
+        for ($end = $start; $end < $count; $end++) {
+            $joined .= $tokens[$end];
+            if ($joined !== '') {
+                $segments[$joined] = $joined;
+            }
+        }
+    }
+
+    return array_values($segments);
+}
+
 function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $candidateSources): array
 {
     $candidateNorms = [];
+    $candidateSegments = [];
     foreach ($candidateSources as $candidateSource) {
         $candidateNorm = normalise_match_source((string)$candidateSource);
         if ($candidateNorm !== '') {
             $candidateNorms[$candidateNorm] = $candidateNorm;
         }
+        foreach (nickname_match_segments((string)$candidateSource) as $segment) {
+            $candidateSegments[$segment] = $segment;
+        }
     }
 
-    if ($candidateNorms === []) {
+    if ($candidateNorms === [] && $candidateSegments === []) {
         return ['member' => null, 'match_type' => 'none', 'ambiguous' => false];
     }
 
@@ -108,6 +145,26 @@ function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $cand
         if (isset($membersByNormalisedRsn[$candidateNorm])) {
             return ['member' => $membersByNormalisedRsn[$candidateNorm], 'match_type' => 'exact', 'ambiguous' => false];
         }
+    }
+
+    $condensedExactMatches = [];
+    foreach ($candidateSegments as $candidateSegment) {
+        $candidateCondensed = condensed_match_value($candidateSegment);
+        if ($candidateCondensed === '') {
+            continue;
+        }
+        foreach ($membersByNormalisedRsn as $rsnNorm => $member) {
+            $memberCondensed = condensed_match_value((string)$rsnNorm);
+            if ($memberCondensed !== '' && $candidateCondensed === $memberCondensed) {
+                $condensedExactMatches[(string)($member['id'] ?? $rsnNorm)] = $member;
+            }
+        }
+    }
+    if (count($condensedExactMatches) === 1) {
+        return ['member' => array_values($condensedExactMatches)[0], 'match_type' => 'exact_compact', 'ambiguous' => false];
+    }
+    if (count($condensedExactMatches) > 1) {
+        return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
     }
 
     $tokenMatches = [];
@@ -126,31 +183,6 @@ function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $cand
         return ['member' => array_values($tokenMatches)[0], 'match_type' => 'contains', 'ambiguous' => false];
     }
     if (count($tokenMatches) > 1) {
-        return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
-    }
-
-    $containsMatches = [];
-    $longestLength = 0;
-    foreach ($candidateNorms as $candidateNorm) {
-        foreach ($membersByNormalisedRsn as $rsnNorm => $member) {
-            if ($rsnNorm === '' || !str_contains($candidateNorm, (string)$rsnNorm)) {
-                continue;
-            }
-            $length = mb_strlen((string)$rsnNorm, 'UTF-8');
-            $key = (string)($member['id'] ?? $rsnNorm);
-            if ($length > $longestLength) {
-                $containsMatches = [$key => $member];
-                $longestLength = $length;
-            } elseif ($length === $longestLength) {
-                $containsMatches[$key] = $member;
-            }
-        }
-    }
-
-    if (count($containsMatches) === 1) {
-        return ['member' => array_values($containsMatches)[0], 'match_type' => 'contains', 'ambiguous' => false];
-    }
-    if (count($containsMatches) > 1) {
         return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
     }
 

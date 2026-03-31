@@ -339,6 +339,9 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <?php if ($nicknameMatch): ?>
                         <div><?= h((string)$nicknameMatch['rsn']) ?><?= !empty($nicknameMatch['rank_name']) ? ' (' . h((string)$nicknameMatch['rank_name']) . ')' : '' ?></div>
                         <div class="small muted mono">Matched via normalised name: <?= h((string)$nicknameMatch['rsn_normalised']) ?></div>
+                        <div class="small muted">
+                            <?php if (($row['nickname_match_type'] ?? '') === 'exact_compact'): ?>Space-insensitive exact match<?php elseif (($row['nickname_match_type'] ?? '') === 'contains'): ?>Token/contains match<?php else: ?>Exact match<?php endif; ?>
+                        </div>
                     <?php else: ?>
                         <span class="muted">No fallback match</span>
                     <?php endif; ?>
