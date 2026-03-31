@@ -279,6 +279,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         </table>
         <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Mappings</button></p>
     </form>
+    
     <script>
     document.addEventListener('DOMContentLoaded', function () {
         const pickers = document.querySelectorAll('[data-role-picker]');
@@ -304,6 +305,11 @@ require_once __DIR__ . '/../../app/views/header.php';
             summary.textContent = checked.length ? checked.join(', ') : 'Select one or more Discord roles';
         };
 
+        const setOptionVisible = (option, visible) => {
+            option.hidden = !visible;
+            option.style.display = visible ? 'flex' : 'none';
+        };
+
         const applyPickerFilter = (picker) => {
             const search = picker.querySelector('[data-role-picker-search]');
             const needle = ((search ? search.value : '') || '').trim().toLowerCase();
@@ -315,13 +321,14 @@ require_once __DIR__ . '/../../app/views/header.php';
                 const haystack = (option.getAttribute('data-filter-text') || '').toLowerCase();
                 const selectedInput = option.querySelector('[data-role-picker-checkbox]:checked, [data-role-picker-radio]:checked');
                 const isPlaceholder = haystack === '' && option.querySelector('[data-role-picker-radio]');
-                const visible = needle === '' || isPlaceholder || haystack.includes(needle) || !!selectedInput;
-                option.hidden = !visible;
+                const visible = needle === '' || isPlaceholder || haystack.indexOf(needle) !== -1 || !!selectedInput;
+                setOptionVisible(option, visible);
                 if (visible) visibleCount++;
             });
 
             if (empty) {
                 empty.hidden = visibleCount !== 0;
+                empty.style.display = visibleCount === 0 ? 'block' : 'none';
             }
         };
 
@@ -334,6 +341,7 @@ require_once __DIR__ . '/../../app/views/header.php';
 
             if (toggle) {
                 toggle.addEventListener('click', function (event) {
+                    event.preventDefault();
                     event.stopPropagation();
                     document.querySelectorAll('[data-role-picker].open').forEach((openPicker) => {
                         if (openPicker !== picker) {
@@ -342,7 +350,10 @@ require_once __DIR__ . '/../../app/views/header.php';
                     });
                     picker.classList.toggle('open');
                     if (picker.classList.contains('open') && search) {
-                        window.setTimeout(() => search.focus(), 0);
+                        window.setTimeout(() => {
+                            search.focus();
+                            search.select();
+                        }, 0);
                     }
                 });
             }
@@ -363,14 +374,13 @@ require_once __DIR__ . '/../../app/views/header.php';
             });
 
             if (search) {
-                search.addEventListener('click', function (event) {
-                    event.stopPropagation();
+                ['click', 'mousedown', 'mouseup', 'keydown', 'keyup'].forEach((eventName) => {
+                    search.addEventListener(eventName, function (event) {
+                        event.stopPropagation();
+                    });
                 });
                 search.addEventListener('input', function () {
                     applyPickerFilter(picker);
-                });
-                search.addEventListener('keydown', function (event) {
-                    event.stopPropagation();
                 });
             }
         });
@@ -384,5 +394,6 @@ require_once __DIR__ . '/../../app/views/header.php';
         });
     });
     </script>
+
 <?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>
