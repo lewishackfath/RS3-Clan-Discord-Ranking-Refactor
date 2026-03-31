@@ -7,10 +7,12 @@ $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
 $missingTables = require_tables($pdo, ['rs_rank_mappings', 'discord_role_flags']);
+$singleSelectRanks = ['Guest', 'Clan Member'];
 
 function parse_new_role_names(string $value): array
 {
-    $parts = preg_split('/[\r\n,]+/', $value) ?: [];
+    $parts = preg_split('/[
+,]+/', $value) ?: [];
     $clean = [];
     foreach ($parts as $part) {
         $name = trim($part);
@@ -27,6 +29,7 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $roles = discord_get_guild_roles($guildId);
         $roleMap = discord_role_map($roles);
         $selectedRoles = is_array($_POST['discord_role_ids'] ?? null) ? $_POST['discord_role_ids'] : [];
+        $singleSelectedRoles = is_array($_POST['discord_role_id_single'] ?? null) ? $_POST['discord_role_id_single'] : [];
         $newRoleNames = is_array($_POST['new_role_names'] ?? null) ? $_POST['new_role_names'] : [];
         $enabledRows = is_array($_POST['is_enabled'] ?? null) ? $_POST['is_enabled'] : [];
 
@@ -35,11 +38,16 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
             VALUES (:clan_id, :rank_name, :role_id, :role_name, :is_enabled)');
 
         foreach (rs_rank_order() as $rankName) {
-            $existingRoleIds = $selectedRoles[$rankName] ?? [];
-            if (!is_array($existingRoleIds)) {
-                $existingRoleIds = [$existingRoleIds];
+            if (in_array($rankName, $singleSelectRanks, true)) {
+                $selectedRoleId = trim((string)($singleSelectedRoles[$rankName] ?? ''));
+                $existingRoleIds = $selectedRoleId !== '' ? [$selectedRoleId] : [];
+            } else {
+                $existingRoleIds = $selectedRoles[$rankName] ?? [];
+                if (!is_array($existingRoleIds)) {
+                    $existingRoleIds = [$existingRoleIds];
+                }
+                $existingRoleIds = array_values(array_unique(array_filter(array_map('strval', $existingRoleIds), static fn(string $id): bool => trim($id) !== '')));
             }
-            $existingRoleIds = array_values(array_unique(array_filter(array_map('strval', $existingRoleIds), static fn(string $id): bool => trim($id) !== '')));
 
             $createNames = parse_new_role_names((string)($newRoleNames[$rankName] ?? ''));
             $isEnabled = isset($enabledRows[$rankName]) ? 1 : 0;
@@ -52,6 +60,10 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $existingRoleIds = array_values(array_unique($existingRoleIds));
+            if (in_array($rankName, $singleSelectRanks, true) && count($existingRoleIds) > 1) {
+                $existingRoleIds = [reset($existingRoleIds) ?: ''];
+                $existingRoleIds = array_values(array_filter($existingRoleIds, static fn(string $id): bool => trim($id) !== ''));
+            }
 
             $deleteStmt->execute([
                 'clan_id' => $clanId,
@@ -138,7 +150,7 @@ require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
     <h2>RuneScape Rank to Discord Role Mapping</h2>
-    <p class="muted">Each clan rank can map to one or more Discord roles. Guest and Clan Member are included so you can define the general non-ranked member roles as well.</p>
+    <p class="muted">Mapped clan ranks can now use a cleaner checkbox dropdown for multi-role selection. Guest and Clan Member stay single-select because they are always one-to-one.</p>
 </div>
 
 <?php if ($missingTables): ?>
@@ -157,6 +169,25 @@ require_once __DIR__ . '/../../app/views/header.php';
 
     <form method="post" class="card">
         <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+        <style>
+            .role-picker { position: relative; min-width: 300px; }
+            .role-picker-toggle {
+                width: 100%; text-align: left; background: #0b1220; color: var(--text);
+                border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer;
+            }
+            .role-picker-toggle .summary { display:block; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+            .role-picker-menu {
+                display:none; position:absolute; top: calc(100% + 6px); left:0; right:0; z-index:30;
+                background: #0b1220; border:1px solid var(--line); border-radius: 12px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+                max-height: 320px; overflow: auto;
+            }
+            .role-picker.open .role-picker-menu { display:block; }
+            .role-picker-search { margin-bottom: 8px; }
+            .role-picker-option { display:flex; gap:8px; align-items:flex-start; padding: 6px 4px; border-radius: 8px; }
+            .role-picker-option:hover { background: rgba(255,255,255,.04); }
+            .role-picker-option input { margin-top: 2px; }
+            .role-picker-empty { padding: 8px 4px; color: var(--muted); }
+        </style>
         <table>
             <thead>
                 <tr>
@@ -170,12 +201,17 @@ require_once __DIR__ . '/../../app/views/header.php';
             <?php foreach (rs_rank_order() as $rankName):
                 $row = $rankMappings[$rankName] ?? ['rs_rank_name' => $rankName, 'discord_role_ids' => [], 'discord_role_names' => [], 'is_enabled' => 1];
                 $selected = array_map('strval', $row['discord_role_ids'] ?? []);
+                $isSingle = in_array($rankName, $singleSelectRanks, true);
+                $currentSummary = array_filter($row['discord_role_names'] ?? []);
             ?>
                 <tr>
                     <td>
                         <strong><?= h($rankName) ?></strong>
-                        <?php if (!empty($row['discord_role_names'])): ?>
-                            <br><span class="small muted">Current: <?= h(implode(', ', array_filter($row['discord_role_names']))) ?></span>
+                        <?php if ($currentSummary): ?>
+                            <br><span class="small muted">Current: <?= h(implode(', ', $currentSummary)) ?></span>
+                        <?php endif; ?>
+                        <?php if ($isSingle): ?>
+                            <br><span class="small muted">Single-role mapping</span>
                         <?php endif; ?>
                         <?php if (!empty($roleWarnings[$rankName])): ?>
                             <?php foreach ($roleWarnings[$rankName] as $warning): ?>
@@ -184,15 +220,37 @@ require_once __DIR__ . '/../../app/views/header.php';
                         <?php endif; ?>
                     </td>
                     <td>
-                        <select name="discord_role_ids[<?= h($rankName) ?>][]" multiple size="6">
-                            <?php foreach ($discordRoles as $role): ?>
-                                <?php if ((string)$role['name'] === '@everyone') continue; ?>
-                                <option value="<?= h((string)$role['id']) ?>" <?= in_array((string)$role['id'], $selected, true) ? 'selected' : '' ?>>
-                                    <?= h((string)$role['name']) ?> (position <?= h((string)$role['position']) ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <div class="small muted" style="margin-top:6px">Hold Ctrl or Cmd to select multiple roles.</div>
+                        <?php if ($isSingle): ?>
+                            <select name="discord_role_id_single[<?= h($rankName) ?>]">
+                                <option value="">— No role selected —</option>
+                                <?php foreach ($discordRoles as $role): ?>
+                                    <?php if ((string)$role['name'] === '@everyone') continue; ?>
+                                    <option value="<?= h((string)$role['id']) ?>" <?= in_array((string)$role['id'], $selected, true) ? 'selected' : '' ?>>
+                                        <?= h((string)$role['name']) ?> (position <?= h((string)$role['position']) ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php else: ?>
+                            <div class="role-picker" data-role-picker>
+                                <button class="role-picker-toggle" type="button" data-role-picker-toggle>
+                                    <span class="summary" data-role-picker-summary><?= $currentSummary ? h(implode(', ', $currentSummary)) : 'Select one or more Discord roles' ?></span>
+                                </button>
+                                <div class="role-picker-menu">
+                                    <input class="role-picker-search" type="text" placeholder="Search roles..." data-role-picker-search>
+                                    <div data-role-picker-options>
+                                        <?php foreach ($discordRoles as $role): ?>
+                                            <?php if ((string)$role['name'] === '@everyone') continue; ?>
+                                            <label class="role-picker-option" data-role-picker-option data-filter-text="<?= h(mb_strtolower((string)$role['name'] . ' ' . (string)$role['position'], 'UTF-8')) ?>">
+                                                <input type="checkbox" name="discord_role_ids[<?= h($rankName) ?>][]" value="<?= h((string)$role['id']) ?>" data-role-picker-checkbox data-role-name="<?= h((string)$role['name']) ?>" <?= in_array((string)$role['id'], $selected, true) ? 'checked' : '' ?>>
+                                                <span><?= h((string)$role['name']) ?> <span class="small muted">(position <?= h((string)$role['position']) ?>)</span></span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <div class="role-picker-empty" data-role-picker-empty hidden>No roles match that search.</div>
+                                </div>
+                            </div>
+                            <div class="small muted" style="margin-top:6px">Click to open, then tick the roles you want.</div>
+                        <?php endif; ?>
                     </td>
                     <td>
                         <textarea name="new_role_names[<?= h($rankName) ?>]" placeholder="Optional. Add one new role per line, or separate multiple names with commas."></textarea>
@@ -204,5 +262,61 @@ require_once __DIR__ . '/../../app/views/header.php';
         </table>
         <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Mappings</button></p>
     </form>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const pickers = document.querySelectorAll('[data-role-picker]');
+        const updateSummary = (picker) => {
+            const checked = Array.from(picker.querySelectorAll('[data-role-picker-checkbox]:checked')).map(el => el.getAttribute('data-role-name') || '').filter(Boolean);
+            const summary = picker.querySelector('[data-role-picker-summary]');
+            summary.textContent = checked.length ? checked.join(', ') : 'Select one or more Discord roles';
+        };
+
+        pickers.forEach((picker) => {
+            const toggle = picker.querySelector('[data-role-picker-toggle]');
+            const search = picker.querySelector('[data-role-picker-search]');
+            const options = Array.from(picker.querySelectorAll('[data-role-picker-option]'));
+            const empty = picker.querySelector('[data-role-picker-empty]');
+
+            updateSummary(picker);
+
+            toggle.addEventListener('click', function (event) {
+                event.stopPropagation();
+                document.querySelectorAll('[data-role-picker].open').forEach((openPicker) => {
+                    if (openPicker !== picker) {
+                        openPicker.classList.remove('open');
+                    }
+                });
+                picker.classList.toggle('open');
+                if (picker.classList.contains('open')) {
+                    search.focus();
+                }
+            });
+
+            picker.querySelectorAll('[data-role-picker-checkbox]').forEach((checkbox) => {
+                checkbox.addEventListener('change', function () { updateSummary(picker); });
+            });
+
+            search.addEventListener('input', function () {
+                const needle = search.value.trim().toLowerCase();
+                let visibleCount = 0;
+                options.forEach((option) => {
+                    const haystack = (option.getAttribute('data-filter-text') || '').toLowerCase();
+                    const visible = needle === '' || haystack.includes(needle);
+                    option.hidden = !visible;
+                    if (visible) visibleCount++;
+                });
+                empty.hidden = visibleCount !== 0;
+            });
+        });
+
+        document.addEventListener('click', function (event) {
+            document.querySelectorAll('[data-role-picker].open').forEach((picker) => {
+                if (!picker.contains(event.target)) {
+                    picker.classList.remove('open');
+                }
+            });
+        });
+    });
+    </script>
 <?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>
