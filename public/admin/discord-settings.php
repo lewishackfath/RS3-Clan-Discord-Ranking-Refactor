@@ -6,6 +6,7 @@ require_login();
 $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
+$allowedIntervals = [5, 10, 15, 30, 60];
 
 $missingTables = require_tables($pdo, ['guild_settings']);
 $missingColumns = [];
@@ -15,6 +16,9 @@ if (!$missingTables) {
         'log_channel_name_cache',
         'send_guest_dm',
         'guest_dm_message',
+        'auto_sync_enabled',
+        'auto_sync_interval_minutes',
+        'last_auto_sync_at',
     ]);
 }
 
@@ -46,6 +50,12 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
             throw new RuntimeException('Guest private message contents cannot be blank while guest PMs are enabled.');
         }
 
+        $autoSyncEnabled = isset($_POST['auto_sync_enabled']) ? 1 : 0;
+        $autoSyncInterval = (int)($_POST['auto_sync_interval_minutes'] ?? 15);
+        if (!in_array($autoSyncInterval, $allowedIntervals, true)) {
+            throw new RuntimeException('Please choose a valid automatic sync frequency.');
+        }
+
         $stmt = $pdo->prepare('INSERT INTO guild_settings (
                 clan_id,
                 discord_guild_id,
@@ -53,7 +63,9 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 log_channel_id,
                 log_channel_name_cache,
                 send_guest_dm,
-                guest_dm_message
+                guest_dm_message,
+                auto_sync_enabled,
+                auto_sync_interval_minutes
             ) VALUES (
                 :clan_id,
                 :guild_id,
@@ -61,7 +73,9 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 :log_channel_id,
                 :log_channel_name,
                 :send_guest_dm,
-                :guest_dm_message
+                :guest_dm_message,
+                :auto_sync_enabled,
+                :auto_sync_interval_minutes
             )
             ON DUPLICATE KEY UPDATE
                 discord_guild_id = VALUES(discord_guild_id),
@@ -69,7 +83,9 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 log_channel_id = VALUES(log_channel_id),
                 log_channel_name_cache = VALUES(log_channel_name_cache),
                 send_guest_dm = VALUES(send_guest_dm),
-                guest_dm_message = VALUES(guest_dm_message)');
+                guest_dm_message = VALUES(guest_dm_message),
+                auto_sync_enabled = VALUES(auto_sync_enabled),
+                auto_sync_interval_minutes = VALUES(auto_sync_interval_minutes)');
 
         $stmt->execute([
             'clan_id' => $clanId,
@@ -79,6 +95,8 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
             'log_channel_name' => $logChannelId !== '' ? ($channelNames[$logChannelId] ?? null) : null,
             'send_guest_dm' => $sendGuestDm,
             'guest_dm_message' => $guestDmMessage !== '' ? $guestDmMessage : null,
+            'auto_sync_enabled' => $autoSyncEnabled,
+            'auto_sync_interval_minutes' => $autoSyncInterval,
         ]);
 
         flash('success', 'Discord settings saved.');
@@ -95,9 +113,14 @@ $settings = [
     'log_channel_name_cache' => '',
     'send_guest_dm' => 0,
     'guest_dm_message' => "Hi {discord_display_name},\n\nYour Discord roles have been updated because we could not match your account to an active clan member.\n\nIf this is incorrect, please contact staff and make sure your Discord nickname matches your RuneScape name.",
+    'auto_sync_enabled' => 0,
+    'auto_sync_interval_minutes' => 15,
+    'last_auto_sync_at' => null,
 ];
 $channels = [];
 $guild = null;
+$lastAutoSyncUtc = null;
+$nextEligibleUtc = null;
 
 if (!$missingTables && !$missingColumns) {
     try {
@@ -110,6 +133,13 @@ if (!$missingTables && !$missingColumns) {
         if (is_array($row)) {
             $settings = array_merge($settings, $row);
         }
+
+        $lastAutoSyncRaw = trim((string)($settings['last_auto_sync_at'] ?? ''));
+        if ($lastAutoSyncRaw !== '') {
+            $lastAutoSyncUtc = new DateTimeImmutable($lastAutoSyncRaw, new DateTimeZone('UTC'));
+            $intervalMinutes = max(1, (int)($settings['auto_sync_interval_minutes'] ?? 15));
+            $nextEligibleUtc = $lastAutoSyncUtc->modify('+' . $intervalMinutes . ' minutes');
+        }
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
         redirect('/admin/index.php');
@@ -120,14 +150,14 @@ require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
     <h2>Discord Settings</h2>
-    <p class="muted">Configure where sync activity should be logged and what message should be sent when a member is moved to Guest.</p>
+    <p class="muted">Configure logging, Guest DM behaviour, and the automatic scheduler that runs the same live sync engine used by <strong>Run Sync Now</strong>.</p>
 </div>
 
 <?php if ($missingTables): ?>
     <div class="card">
         <span class="status bad">Setup Required</span>
         <p>Missing table(s): <?= h(implode(', ', $missingTables)) ?></p>
-        <p class="muted small">Run the new migration in <code>sql/migrations/phase2.1-discord-settings.sql</code>.</p>
+        <p class="muted small">Run the required migrations before using this page.</p>
     </div>
 <?php elseif ($missingColumns): ?>
     <div class="card">
@@ -138,7 +168,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <li><code><?= h($column) ?></code></li>
             <?php endforeach; ?>
         </ul>
-        <p class="muted small">Run <code>sql/migrations/phase2.1-discord-settings.sql</code> before using this page.</p>
+        <p class="muted small">Run <code>sql/migrations/phase3.2-auto-sync-scheduler.sql</code> if you are upgrading from the previous working version.</p>
     </div>
 <?php else: ?>
 <form method="post" class="card">
@@ -163,7 +193,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <span class="code-badge"><?= h($placeholder) ?></span>
                 <?php endforeach; ?>
             </div>
-            <p class="small muted" style="margin-top:10px">These values will be available when guest DMs are sent during live sync changes.</p>
+            <p class="small muted" style="margin-top:10px">These values are available when Guest DMs are sent during live role changes.</p>
         </div>
     </div>
 
@@ -179,7 +209,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                     </option>
                 <?php endforeach; ?>
             </select>
-            <p class="hint">Used for sync logs and Guest DM failures once live apply is enabled.</p>
+            <p class="hint">Used for per-user live sync embeds and final sync summaries.</p>
         </div>
 
         <div>
@@ -195,6 +225,55 @@ require_once __DIR__ . '/../../app/views/header.php';
         <label for="guest_dm_message"><strong>Guest Private Message Contents</strong></label>
         <textarea id="guest_dm_message" name="guest_dm_message" placeholder="Enter the message sent when a member is changed to Guest."><?= h((string)($settings['guest_dm_message'] ?? '')) ?></textarea>
         <p class="hint">This message is only used if Guest private messages are enabled.</p>
+    </div>
+
+    <div class="card" style="margin-top:18px; margin-bottom:0;">
+        <h3 style="margin-top:0;">Automatic Sync Scheduler</h3>
+        <p class="muted">The cron runner uses the same live sync engine as <strong>Run Sync Now</strong>. It will only run clans that are enabled and due.</p>
+        <div class="grid two">
+            <div>
+                <label class="inline">
+                    <input type="checkbox" name="auto_sync_enabled" value="1" <?= !empty($settings['auto_sync_enabled']) ? 'checked' : '' ?>>
+                    <span><strong>Enable Automatic Sync</strong></span>
+                </label>
+                <p class="hint">Leave disabled if you only want staff to run syncs manually.</p>
+            </div>
+            <div>
+                <label for="auto_sync_interval_minutes"><strong>Sync Frequency</strong></label>
+                <select id="auto_sync_interval_minutes" name="auto_sync_interval_minutes">
+                    <?php foreach ($allowedIntervals as $minutes): ?>
+                        <option value="<?= h((string)$minutes) ?>" <?= (int)$minutes === (int)($settings['auto_sync_interval_minutes'] ?? 15) ? 'selected' : '' ?>>Every <?= h((string)$minutes) ?> minute<?= $minutes === 1 ? '' : 's' ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <p class="hint">This controls the earliest next run time once the cron job is in place.</p>
+            </div>
+        </div>
+
+        <table style="margin-top:18px;">
+            <tbody>
+                <tr>
+                    <th>Auto Sync Status</th>
+                    <td><span class="status <?= !empty($settings['auto_sync_enabled']) ? 'ok' : 'warn' ?>"><?= !empty($settings['auto_sync_enabled']) ? 'Enabled' : 'Disabled' ?></span></td>
+                </tr>
+                <tr>
+                    <th>Last Auto Sync Run</th>
+                    <td><?= $lastAutoSyncUtc ? h($lastAutoSyncUtc->format('Y-m-d H:i:s')) . ' UTC' : '<span class="muted">Never</span>' ?></td>
+                </tr>
+                <tr>
+                    <th>Next Eligible Auto Sync</th>
+                    <td>
+                        <?php if (empty($settings['auto_sync_enabled'])): ?>
+                            <span class="muted">Automatic sync is disabled</span>
+                        <?php elseif ($nextEligibleUtc instanceof DateTimeImmutable): ?>
+                            <?= h($nextEligibleUtc->format('Y-m-d H:i:s')) ?> UTC
+                        <?php else: ?>
+                            <span class="muted">Immediately when the cron runner next checks</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="hint" style="margin-top:12px;">Cron entry example: <code>*/5 * * * * php /path/to/project/cron/cron_auto_sync.php</code></p>
     </div>
 
     <div class="table-actions">

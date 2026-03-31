@@ -8,6 +8,7 @@ $pdo = db();
 $clanId = (int)env('CLAN_ID', '1');
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $missingTables = require_tables($pdo, ['sync_runs', 'sync_run_members']);
+$hasTriggerSource = !$missingTables && column_exists($pdo, 'sync_runs', 'trigger_source');
 
 function sync_run_status_meta(string $status): array
 {
@@ -34,6 +35,15 @@ function sync_member_status_meta(string $status): array
     };
 }
 
+function sync_trigger_source_meta(string $source): array
+{
+    return match ($source) {
+        'auto' => ['Automatic', 'ok'],
+        'manual' => ['Manual', 'warn'],
+        default => [ucwords(str_replace('_', ' ', $source)), 'warn'],
+    };
+}
+
 function role_ids_to_badges(?string $csv, array $roleMap): string
 {
     $ids = csv_ids((string)$csv);
@@ -55,6 +65,15 @@ $runStatusFilter = trim((string)($_GET['run_status'] ?? 'all'));
 $allowedRunStatus = ['all', 'running', 'completed', 'completed_with_errors', 'failed'];
 if (!in_array($runStatusFilter, $allowedRunStatus, true)) {
     $runStatusFilter = 'all';
+}
+
+$sourceFilter = trim((string)($_GET['source'] ?? 'all'));
+$allowedSources = ['all', 'manual', 'auto'];
+if (!in_array($sourceFilter, $allowedSources, true)) {
+    $sourceFilter = 'all';
+}
+if (!$hasTriggerSource) {
+    $sourceFilter = 'all';
 }
 
 $selectedRunId = max(0, (int)($_GET['run_id'] ?? 0));
@@ -90,6 +109,10 @@ if (!$missingTables) {
     if ($runStatusFilter !== 'all') {
         $runSql .= ' AND status = :run_status';
         $runParams['run_status'] = $runStatusFilter;
+    }
+    if ($hasTriggerSource && $sourceFilter !== 'all') {
+        $runSql .= ' AND trigger_source = :trigger_source';
+        $runParams['trigger_source'] = $sourceFilter;
     }
     $runSql .= ' ORDER BY started_at_utc DESC, id DESC LIMIT 50';
     $runStmt = $pdo->prepare($runSql);
@@ -132,7 +155,7 @@ if (!$missingTables) {
             $memberSql .= ' AND (resolved_rsn IS NULL OR resolved_rsn = "")';
         }
         if ($onlyErrors) {
-            $memberSql .= ' AND (status = "error" OR guest_dm_success = 0 AND guest_dm_attempted = 1 OR guest_dm_error IS NOT NULL AND guest_dm_error <> "")';
+            $memberSql .= ' AND (status = "error" OR (guest_dm_success = 0 AND guest_dm_attempted = 1) OR (guest_dm_error IS NOT NULL AND guest_dm_error <> ""))';
         }
         if ($onlyChanged) {
             $memberSql .= ' AND status = "changed"';
@@ -174,7 +197,7 @@ require_once __DIR__ . '/../../app/views/header.php';
     <div class="table-actions">
         <div>
             <h2 style="margin:0 0 8px;">Sync History</h2>
-            <div class="muted">Review previous manual sync runs, member-level actions, Guest fallbacks, and Discord role changes.</div>
+            <div class="muted">Review previous sync runs, member-level actions, Guest fallbacks, DM outcomes, and whether a run was started manually or by the scheduler.</div>
         </div>
         <div class="inline">
             <a class="btn-secondary" href="/admin/sync-preview.php">Back to Sync Preview</a>
@@ -204,6 +227,16 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <option value="failed" <?= $runStatusFilter === 'failed' ? 'selected' : '' ?>>Failed</option>
                 </select>
             </div>
+            <?php if ($hasTriggerSource): ?>
+            <div>
+                <label class="small muted" for="source">Trigger Source</label>
+                <select id="source" name="source">
+                    <option value="all" <?= $sourceFilter === 'all' ? 'selected' : '' ?>>All Sources</option>
+                    <option value="manual" <?= $sourceFilter === 'manual' ? 'selected' : '' ?>>Manual</option>
+                    <option value="auto" <?= $sourceFilter === 'auto' ? 'selected' : '' ?>>Automatic</option>
+                </select>
+            </div>
+            <?php endif; ?>
             <?php if ($selectedRunId > 0): ?>
                 <input type="hidden" name="run_id" value="<?= h((string)$selectedRunId) ?>">
             <?php endif; ?>
@@ -231,11 +264,13 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <tbody>
                     <?php foreach ($runs as $run): ?>
                         <?php [$runLabel, $runClass] = sync_run_status_meta((string)$run['status']); ?>
+                        <?php [$sourceLabel, $sourceClass] = sync_trigger_source_meta((string)($run['trigger_source'] ?? 'manual')); ?>
                         <tr>
                             <td>
                                 <div class="stack">
                                     <a href="?<?= h(http_build_query(array_merge($_GET, ['run_id' => (int)$run['id']])) ) ?>"><strong>#<?= h((string)$run['id']) ?></strong></a>
                                     <span class="muted small">By <?= h((string)($run['initiated_by_name'] ?: 'Unknown')) ?></span>
+                                    <?php if ($hasTriggerSource): ?><span class="status <?= h($sourceClass) ?>"><?= h($sourceLabel) ?></span><?php endif; ?>
                                 </div>
                             </td>
                             <td class="nowrap">
@@ -259,9 +294,11 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <p class="muted">Choose a run from the left to inspect it.</p>
             <?php else: ?>
                 <?php [$runLabel, $runClass] = sync_run_status_meta((string)$selectedRun['status']); ?>
+                <?php [$sourceLabel, $sourceClass] = sync_trigger_source_meta((string)($selectedRun['trigger_source'] ?? 'manual')); ?>
                 <table>
                     <tr><th>Run ID</th><td>#<?= h((string)$selectedRun['id']) ?></td></tr>
                     <tr><th>Status</th><td><span class="status <?= h($runClass) ?>"><?= h($runLabel) ?></span></td></tr>
+                    <?php if ($hasTriggerSource): ?><tr><th>Trigger Source</th><td><span class="status <?= h($sourceClass) ?>"><?= h($sourceLabel) ?></span></td></tr><?php endif; ?>
                     <tr><th>Started</th><td><?= h((string)$selectedRun['started_at_utc']) ?> UTC</td></tr>
                     <tr><th>Finished</th><td><?= !empty($selectedRun['finished_at_utc']) ? h((string)$selectedRun['finished_at_utc']) . ' UTC' : '<span class="muted">Still running</span>' ?></td></tr>
                     <tr><th>Initiated By</th><td><?= h((string)($selectedRun['initiated_by_name'] ?: 'Unknown')) ?></td></tr>
@@ -289,6 +326,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             <form method="get" class="toolbar">
                 <input type="hidden" name="run_id" value="<?= h((string)$selectedRun['id']) ?>">
                 <input type="hidden" name="run_status" value="<?= h($runStatusFilter) ?>">
+                <?php if ($hasTriggerSource): ?><input type="hidden" name="source" value="<?= h($sourceFilter) ?>"><?php endif; ?>
                 <div class="grow">
                     <label class="small muted" for="search">Search</label>
                     <input id="search" type="text" name="search" value="<?= h($search) ?>" placeholder="Discord name, RSN, rank, note...">
@@ -319,69 +357,70 @@ require_once __DIR__ . '/../../app/views/header.php';
 
         <div class="card">
             <div class="table-actions">
-                <h3 style="margin:0;">Run Members</h3>
-                <div class="hint">Showing up to 250 rows for this run.</div>
+                <div class="hint"><?= h((string)count($memberRows)) ?> member row(s) shown</div>
             </div>
-            <?php if (!$memberRows): ?>
-                <p class="muted">No members matched the current filters.</p>
-            <?php else: ?>
-                <table>
-                    <thead>
+            <table>
+                <thead>
+                <tr>
+                    <th>Discord User</th>
+                    <th>Resolved Member</th>
+                    <th>Status</th>
+                    <th>Roles Added</th>
+                    <th>Roles Removed</th>
+                    <th>Blocked Roles</th>
+                    <th>Guest DM</th>
+                    <th>Notes</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($memberRows as $row): ?>
+                    <?php [$memberLabel, $memberClass] = sync_member_status_meta((string)$row['status']); ?>
                     <tr>
-                        <th>Discord User</th>
-                        <th>Resolved Member</th>
-                        <th>Status</th>
-                        <th>Roles Added</th>
-                        <th>Roles Removed</th>
-                        <th>Blocked</th>
-                        <th>Guest DM</th>
-                        <th>Notes</th>
+                        <td>
+                            <div class="stack">
+                                <strong><?= h((string)($row['discord_display_name'] ?: $row['discord_username'])) ?></strong>
+                                <span class="muted small">@<?= h((string)$row['discord_username']) ?></span>
+                                <span class="muted small mono"><?= h((string)$row['discord_user_id']) ?></span>
+                            </div>
+                        </td>
+                        <td>
+                            <?php if (!empty($row['resolved_rsn'])): ?>
+                                <div class="stack">
+                                    <strong><?= h((string)$row['resolved_rsn']) ?></strong>
+                                    <span class="muted small">Rank: <?= h((string)($row['resolved_rank_name'] ?: 'Unknown')) ?></span>
+                                    <span class="code-badge"><?= h((string)($row['resolved_by'] ?: 'unknown')) ?></span>
+                                </div>
+                            <?php else: ?>
+                                <div class="stack">
+                                    <strong>Guest</strong>
+                                    <span class="muted small">No RuneScape match</span>
+                                </div>
+                            <?php endif; ?>
+                        </td>
+                        <td><span class="status <?= h($memberClass) ?>"><?= h($memberLabel) ?></span></td>
+                        <td><?= role_ids_to_badges((string)($row['added_role_ids_csv'] ?? ''), $roleMap) ?></td>
+                        <td><?= role_ids_to_badges((string)($row['removed_role_ids_csv'] ?? ''), $roleMap) ?></td>
+                        <td><?= role_ids_to_badges((string)($row['blocked_role_ids_csv'] ?? ''), $roleMap) ?></td>
+                        <td>
+                            <?php if (!empty($row['guest_dm_attempted'])): ?>
+                                <div class="stack">
+                                    <span class="status <?= !empty($row['guest_dm_success']) ? 'ok' : 'bad' ?>"><?= !empty($row['guest_dm_success']) ? 'Sent' : 'Failed' ?></span>
+                                    <?php if (!empty($row['guest_dm_error'])): ?><span class="muted small"><?= h((string)$row['guest_dm_error']) ?></span><?php endif; ?>
+                                </div>
+                            <?php else: ?>
+                                <span class="muted small">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= !empty($row['notes']) ? h((string)$row['notes']) : '<span class="muted small">—</span>' ?></td>
                     </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($memberRows as $row): ?>
-                        <?php [$label, $class] = sync_member_status_meta((string)$row['status']); ?>
-                        <tr>
-                            <td>
-                                <div class="stack">
-                                    <strong><?= h((string)($row['discord_display_name'] ?: $row['discord_username'])) ?></strong>
-                                    <span class="muted small mono">@<?= h((string)$row['discord_username']) ?></span>
-                                    <span class="muted small mono"><?= h((string)$row['discord_user_id']) ?></span>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="stack">
-                                    <strong><?= !empty($row['resolved_rsn']) ? h((string)$row['resolved_rsn']) : 'Guest fallback' ?></strong>
-                                    <span class="muted small"><?= !empty($row['resolved_rank_name']) ? h((string)$row['resolved_rank_name']) : 'No rank resolved' ?></span>
-                                    <span class="muted small">Resolved by: <?= h((string)($row['resolved_by'] ?: 'none')) ?></span>
-                                </div>
-                            </td>
-                            <td><span class="status <?= h($class) ?>"><?= h($label) ?></span></td>
-                            <td><?= role_ids_to_badges((string)($row['added_role_ids_csv'] ?? ''), $roleMap) ?></td>
-                            <td><?= role_ids_to_badges((string)($row['removed_role_ids_csv'] ?? ''), $roleMap) ?></td>
-                            <td><?= role_ids_to_badges((string)($row['blocked_role_ids_csv'] ?? ''), $roleMap) ?></td>
-                            <td>
-                                <div class="stack small">
-                                    <span><?= !empty($row['guest_dm_attempted']) ? 'Attempted' : '—' ?></span>
-                                    <span class="<?= !empty($row['guest_dm_success']) ? 'status ok' : 'muted' ?>" style="display:inline-block;"><?= !empty($row['guest_dm_success']) ? 'Sent' : (!empty($row['guest_dm_attempted']) ? 'Failed' : 'Not needed') ?></span>
-                                    <?php if (!empty($row['guest_dm_error'])): ?>
-                                        <span class="muted"><?= h((string)$row['guest_dm_error']) ?></span>
-                                    <?php endif; ?>
-                                </div>
-                            </td>
-                            <td>
-                                <?php if (!empty($row['notes'])): ?>
-                                    <div class="small"><?= nl2br(h((string)$row['notes'])) ?></div>
-                                <?php else: ?>
-                                    <span class="muted small">—</span>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
+                <?php endforeach; ?>
+                <?php if ($memberRows === []): ?>
+                    <tr><td colspan="8" class="muted">No member rows match the current filters.</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     <?php endif; ?>
 <?php endif; ?>
+
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

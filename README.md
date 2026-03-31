@@ -102,3 +102,24 @@ It:
 ## Phase 2.1 migration
 
 Run `sql/migrations/phase2.1-discord-settings.sql` before using the Discord Settings page.
+
+
+## Phase 3.2 – Automatic sync scheduler
+
+This pack adds:
+- automatic sync settings on the Discord Settings page
+- a cron-safe runner at `cron/cron_auto_sync.php`
+- `trigger_source` on `sync_runs` so Sync History can distinguish manual vs automatic runs
+
+### Existing installs
+Run the migration in:
+`sql/migrations/phase3.2-auto-sync-scheduler.sql`
+
+before enabling automatic sync.
+
+### Cron example
+```bash
+*/5 * * * * /usr/bin/php /path/to/project/cron/cron_auto_sync.php >> /path/to/project/storage/logs/auto-sync.log 2>&1
+```
+
+The cron runner uses the same live sync engine as **Run Sync Now**.

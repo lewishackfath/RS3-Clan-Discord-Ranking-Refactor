@@ -8,7 +8,15 @@ $clanId = (int)env('CLAN_ID', '1');
 $pdo = db();
 $requiredTables = ['guild_settings', 'rs_rank_mappings', 'discord_role_flags', 'discord_user_mappings', 'clan_members'];
 $missingTables = require_tables($pdo, $requiredTables);
-$settingsMissingColumns = !$missingTables ? require_columns($pdo, 'guild_settings', ['log_channel_id', 'log_channel_name_cache', 'send_guest_dm', 'guest_dm_message']) : [];
+$settingsMissingColumns = !$missingTables ? require_columns($pdo, 'guild_settings', [
+    'log_channel_id',
+    'log_channel_name_cache',
+    'send_guest_dm',
+    'guest_dm_message',
+    'auto_sync_enabled',
+    'auto_sync_interval_minutes',
+    'last_auto_sync_at',
+]) : [];
 
 $status = null;
 $errorMessage = null;
@@ -16,6 +24,7 @@ $mappedRoleIds = [];
 $botRoleIds = [];
 $discordSettings = null;
 $latestSyncRun = null;
+$hasTriggerSource = table_exists($pdo, 'sync_runs') && column_exists($pdo, 'sync_runs', 'trigger_source');
 
 if (!$missingTables) {
     if (!$settingsMissingColumns) {
@@ -62,6 +71,12 @@ if (!$missingTables) {
     }
 }
 
+$nextEligibleAutoSync = null;
+if ($discordSettings && !empty($discordSettings['last_auto_sync_at']) && !empty($discordSettings['auto_sync_interval_minutes'])) {
+    $nextEligibleAutoSync = (new DateTimeImmutable((string)$discordSettings['last_auto_sync_at'], new DateTimeZone('UTC')))
+        ->modify('+' . max(1, (int)$discordSettings['auto_sync_interval_minutes']) . ' minutes');
+}
+
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
@@ -76,9 +91,21 @@ require_once __DIR__ . '/../../app/views/header.php';
         <table>
             <tr><th>Log Channel</th><td><?= !empty($discordSettings['log_channel_name_cache']) ? '#' . h((string)$discordSettings['log_channel_name_cache']) : '<span class="muted">Not configured</span>' ?></td></tr>
             <tr><th>Guest DM</th><td><span class="status <?= !empty($discordSettings['send_guest_dm']) ? 'ok' : 'warn' ?>"><?= !empty($discordSettings['send_guest_dm']) ? 'Enabled' : 'Disabled' ?></span></td></tr>
+            <tr><th>Auto Sync</th><td><span class="status <?= !empty($discordSettings['auto_sync_enabled']) ? 'ok' : 'warn' ?>"><?= !empty($discordSettings['auto_sync_enabled']) ? 'Enabled' : 'Disabled' ?></span></td></tr>
+            <tr><th>Frequency</th><td><?= h((string)($discordSettings['auto_sync_interval_minutes'] ?? 15)) ?> minutes</td></tr>
+            <tr><th>Last Auto Sync</th><td><?= !empty($discordSettings['last_auto_sync_at']) ? h((string)$discordSettings['last_auto_sync_at']) . ' UTC' : '<span class="muted">Never</span>' ?></td></tr>
+            <tr><th>Next Eligible</th><td>
+                <?php if (empty($discordSettings['auto_sync_enabled'])): ?>
+                    <span class="muted">Automatic sync is disabled</span>
+                <?php elseif ($nextEligibleAutoSync instanceof DateTimeImmutable): ?>
+                    <?= h($nextEligibleAutoSync->format('Y-m-d H:i:s')) ?> UTC
+                <?php else: ?>
+                    <span class="muted">Immediately when cron next runs</span>
+                <?php endif; ?>
+            </td></tr>
         </table>
         <div class="table-actions">
-            <div class="hint">Configure logging and Guest DM behaviour before live sync is enabled.</div>
+            <div class="hint">Configure logging, Guest DM behaviour, and automatic sync scheduling.</div>
             <a class="btn-secondary" href="/admin/discord-settings.php">Open Discord Settings</a>
         </div>
     </div>
@@ -88,6 +115,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         <?php if ($latestSyncRun): ?>
             <table>
                 <tr><th>Latest Run</th><td>#<?= h((string)$latestSyncRun['id']) ?></td></tr>
+                <?php if ($hasTriggerSource): ?><tr><th>Source</th><td><?= h(ucfirst((string)($latestSyncRun['trigger_source'] ?? 'manual'))) ?></td></tr><?php endif; ?>
                 <tr><th>Status</th><td><span class="status <?= ((string)$latestSyncRun['status'] === 'completed') ? 'ok' : (((string)$latestSyncRun['status'] === 'completed_with_errors') ? 'warn' : 'bad') ?>"><?= h((string)$latestSyncRun['status']) ?></span></td></tr>
                 <tr><th>Started</th><td><?= h((string)$latestSyncRun['started_at_utc']) ?> UTC</td></tr>
                 <tr><th>Changed</th><td><?= h((string)($latestSyncRun['changed_members'] ?? 0)) ?> / <?= h((string)($latestSyncRun['total_members'] ?? 0)) ?></td></tr>
@@ -96,7 +124,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             <p class="muted">No sync runs have been logged yet.</p>
         <?php endif; ?>
         <div class="table-actions">
-            <div class="hint">Inspect full run history, per-member role changes, Guest fallbacks and DM outcomes.</div>
+            <div class="hint">Inspect full run history, per-member role changes, Guest fallbacks, DM outcomes, and trigger source.</div>
             <a class="btn-secondary" href="/admin/sync-history.php">Open Sync History</a>
         </div>
     </div>
@@ -112,6 +140,12 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <li><code><?= h($table) ?></code></li>
             <?php endforeach; ?>
         </ul>
+    </div>
+<?php elseif ($settingsMissingColumns): ?>
+    <div class="card">
+        <span class="status bad">Migration Required</span>
+        <p>The <code>guild_settings</code> table is missing the new automatic sync columns.</p>
+        <p class="muted small">Run <code>sql/migrations/phase3.2-auto-sync-scheduler.sql</code> before using P3.2 features.</p>
     </div>
 <?php elseif ($errorMessage): ?>
     <div class="card">
@@ -145,7 +179,7 @@ require_once __DIR__ . '/../../app/views/header.php';
     <div class="card">
         <h3>Outcome</h3>
         <?php if ($status['ok']): ?>
-            <p><span class="status ok">OK</span> The bot role is high enough and the server is ready for Phase 1 administration.</p>
+            <p><span class="status ok">OK</span> The bot role is high enough and the server is ready for live sync, sync history, and scheduled auto sync.</p>
         <?php else: ?>
             <p><span class="status bad">Action Required</span> The bot role must be moved higher before mappings can be relied on.</p>
             <ul>
