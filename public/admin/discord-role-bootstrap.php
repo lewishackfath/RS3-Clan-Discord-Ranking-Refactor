@@ -25,7 +25,7 @@ function bootstrap_recommended_roles(): array
         ['name' => 'Deputy Owner', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
         ['name' => 'Overseer', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
         ['name' => 'Coordinator', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
-        ['name' => 'Clan Admin', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended Discord equivalent for the RuneScape Admin rank.'],
+        ['name' => 'Admin', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended Discord equivalent for the RuneScape Admin rank.'],
         ['name' => 'General', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
         ['name' => 'Captain', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
         ['name' => 'Lieutenant', 'permission_mode' => 'none', 'permissions' => null, 'description' => 'Recommended clan hierarchy role.'],
@@ -53,6 +53,44 @@ function bootstrap_role_index_by_name(array $roles): array
         }
     }
     return $index;
+}
+
+function bootstrap_role_candidate_names(string $roleName): array
+{
+    $candidates = [];
+
+    $push = static function (string $value) use (&$candidates): void {
+        $value = trim($value);
+        if ($value === '') {
+            return;
+        }
+        if (!in_array($value, $candidates, true)) {
+            $candidates[] = $value;
+        }
+    };
+
+    $push($roleName);
+
+    if (preg_match('/y$/i', $roleName) === 1) {
+        $push(substr($roleName, 0, -1) . 'ies');
+    } elseif (preg_match('/(s|x|z|ch|sh)$/i', $roleName) === 1) {
+        $push($roleName . 'es');
+    } else {
+        $push($roleName . 's');
+    }
+
+    return $candidates;
+}
+
+function bootstrap_find_matching_role(array $rolesByName, string $roleName): ?array
+{
+    foreach (bootstrap_role_candidate_names($roleName) as $candidateName) {
+        if (isset($rolesByName[$candidateName]) && is_array($rolesByName[$candidateName])) {
+            return $rolesByName[$candidateName];
+        }
+    }
+
+    return null;
 }
 
 function bootstrap_existing_rank_mappings(PDO $pdo, int $clanId): array
@@ -102,7 +140,7 @@ function bootstrap_default_rank_targets(): array
         'Lieutenant' => 'Lieutenant',
         'Captain' => 'Captain',
         'General' => 'General',
-        'Admin' => 'Clan Admin',
+        'Admin' => 'Admin',
         'Coordinator' => 'Coordinator',
         'Overseer' => 'Overseer',
         'Deputy Owner' => 'Deputy Owner',
@@ -116,7 +154,7 @@ function bootstrap_scan_plan(array $recommendedRoles, array $rolesByName, array 
     $missingRoleNames = [];
     foreach ($recommendedRoles as $definition) {
         $name = (string)$definition['name'];
-        $existing = $rolesByName[$name] ?? null;
+        $existing = bootstrap_find_matching_role($rolesByName, $name);
         $roleRows[] = [
             'name' => $name,
             'permission_mode' => (string)$definition['permission_mode'],
@@ -137,7 +175,7 @@ function bootstrap_scan_plan(array $recommendedRoles, array $rolesByName, array 
     $settingRows = [];
     foreach ($settingTargets as $column => $roleName) {
         $currentRoleId = trim((string)($guildSettings[$column] ?? ''));
-        $matchedRole = $rolesByName[$roleName] ?? null;
+        $matchedRole = bootstrap_find_matching_role($rolesByName, $roleName);
         $settingRows[] = [
             'column' => $column,
             'label' => $roleName,
@@ -150,7 +188,7 @@ function bootstrap_scan_plan(array $recommendedRoles, array $rolesByName, array 
     $mappingRows = [];
     foreach (bootstrap_default_rank_targets() as $rankName => $roleName) {
         $current = $rankMappings[$rankName] ?? ['role_ids' => [], 'role_names' => [], 'is_enabled' => 1];
-        $matchedRole = $rolesByName[$roleName] ?? null;
+        $matchedRole = bootstrap_find_matching_role($rolesByName, $roleName);
         $hasExactTarget = $matchedRole !== null && in_array((string)$matchedRole['id'], array_map('strval', $current['role_ids']), true);
 
         $mappingRows[] = [
@@ -212,7 +250,9 @@ if (!$missingTables && $scanError === null && $_SERVER['REQUEST_METHOD'] === 'PO
 
             foreach ($recommendedRoles as $definition) {
                 $roleName = (string)$definition['name'];
-                if (isset($rolesByName[$roleName])) {
+                $matchedExistingRole = bootstrap_find_matching_role($rolesByName, $roleName);
+                if ($matchedExistingRole !== null) {
+                    $rolesByName[$roleName] = $matchedExistingRole;
                     continue;
                 }
 
@@ -224,8 +264,8 @@ if (!$missingTables && $scanError === null && $_SERVER['REQUEST_METHOD'] === 'PO
                 $createdRoleNames[] = $roleName;
             }
 
-            $serverAdminRole = $rolesByName['Server Admin'] ?? null;
-            $serverModeratorRole = $rolesByName['Server Moderator'] ?? null;
+            $serverAdminRole = bootstrap_find_matching_role($rolesByName, 'Server Admin');
+            $serverModeratorRole = bootstrap_find_matching_role($rolesByName, 'Server Moderator');
 
             $upsertGuildSettings = $pdo->prepare('INSERT INTO guild_settings (
                     clan_id,
@@ -293,7 +333,7 @@ if (!$missingTables && $scanError === null && $_SERVER['REQUEST_METHOD'] === 'PO
 
             $mappingCreates = [];
             foreach (bootstrap_default_rank_targets() as $rankName => $targetRoleName) {
-                $matchedRole = $rolesByName[$targetRoleName] ?? null;
+                $matchedRole = bootstrap_find_matching_role($rolesByName, $targetRoleName);
                 if ($matchedRole === null) {
                     continue;
                 }
@@ -349,7 +389,7 @@ require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
     <h2>Discord Role Bootstrap</h2>
-    <p class="muted">Safe first pass: scans the current guild, creates only missing recommended roles by exact name, leaves existing role permissions untouched, and never reorders roles.</p>
+    <p class="muted">Safe first pass: scans the current guild, matches recommended roles by exact name or simple plural variants, creates only missing recommended roles, leaves existing role permissions untouched, and never reorders roles.</p>
 </div>
 
 <?php if ($missingTables): ?>
@@ -386,7 +426,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         <div class="card">
             <h3>Deploy Behaviour</h3>
             <ul>
-                <li>Creates only missing roles from the recommended list.</li>
+                <li>Creates only missing roles from the recommended list after checking exact and plural name matches.</li>
                 <li>Applies permissions only when a role is newly created.</li>
                 <li>Leaves existing roles, permissions, and order untouched.</li>
                 <li>Auto-fills Server Admin / Server Moderator in guild settings only when those settings are currently blank.</li>
