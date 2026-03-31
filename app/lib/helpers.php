@@ -275,6 +275,24 @@ function table_exists(PDO $pdo, string $tableName): bool
     return (bool)$stmt->fetchColumn();
 }
 
+function column_exists(PDO $pdo, string $tableName, string $columnName): bool
+{
+    $stmt = $pdo->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = :table AND column_name = :column LIMIT 1');
+    $stmt->execute(['table' => $tableName, 'column' => $columnName]);
+    return (bool)$stmt->fetchColumn();
+}
+
+function require_columns(PDO $pdo, string $tableName, array $columns): array
+{
+    $missing = [];
+    foreach ($columns as $column) {
+        if (!column_exists($pdo, $tableName, $column)) {
+            $missing[] = $column;
+        }
+    }
+    return $missing;
+}
+
 function require_tables(PDO $pdo, array $tables): array
 {
     $missing = [];
