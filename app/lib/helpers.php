@@ -63,6 +63,37 @@ function normalise_rsn(string $value): string
     return mb_strtolower($value, 'UTF-8');
 }
 
+
+function normalise_match_source(string $value): string
+{
+    $value = strip_tags($value);
+    $value = preg_replace('/[\x{00A0}\x{200B}-\x{200D}\x{FEFF}\x{00AD}]/u', ' ', $value) ?? $value;
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (class_exists('Normalizer')) {
+        $normalised = Normalizer::normalize($value, Normalizer::FORM_KC);
+        if ($normalised !== false) {
+            $value = $normalised;
+        }
+    }
+
+    $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+    $value = preg_replace('/[^0-9A-Za-z _-]+/u', ' ', $value) ?? $value;
+    $value = trim($value);
+    $value = mb_strtolower($value, 'UTF-8');
+    $value = str_replace(' ', '_', $value);
+    $value = preg_replace('/[\p{Cc}\p{Cf}]/u', '', $value) ?? $value;
+
+    if (mb_strlen($value, 'UTF-8') > 12) {
+        $value = mb_substr($value, 0, 12, 'UTF-8');
+    }
+
+    return $value;
+}
+
 function now_utc(): string
 {
     return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
