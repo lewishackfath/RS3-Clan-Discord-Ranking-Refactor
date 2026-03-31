@@ -55,3 +55,13 @@ This patch pack keeps the PHP-only architecture and fixes the first-round setup/
 - The `Clan Members` page can now import the live clan roster and mark missing members inactive
 - Import parsing reuses the hardened RSN cleanup and normalisation approach from your existing sync logic
 - Safety guard: if the API parses 0 members, no database writes are made
+
+
+## Phase 1.3
+
+This pack improves the User Mappings page with:
+- manual-only saved mappings
+- nickname match preview that is never auto-saved
+- search and status filters
+- mapping summary cards
+- better visibility into nickname normalisation

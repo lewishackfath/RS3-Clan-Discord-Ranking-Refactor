@@ -61,11 +61,24 @@ function nav_active(string $needle, string $path): string { return str_contains(
         textarea { min-height: 140px; resize: vertical; }
         .inline { display: flex; gap: 10px; align-items: center; }
         .avatar { width: 36px; height: 36px; border-radius: 999px; vertical-align: middle; margin-right: 10px; }
+        .stack { display: grid; gap: 4px; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+        .toolbar > * { min-width: 180px; }
+        .toolbar .grow { flex: 1 1 260px; }
+        .stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .stat { background: #0b1220; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+        .stat .value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+        .table-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:16px; }
+        .hint { font-size: 12px; color: var(--muted); }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+        .nowrap { white-space: nowrap; }
+        .w-compact { width: 240px; }
         @media (max-width: 980px) {
             .layout { grid-template-columns: 1fr; }
             .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
-            .grid.two { grid-template-columns: 1fr; }
+            .grid.two, .stat-grid { grid-template-columns: 1fr; }
             .main { padding: 16px; }
+            .toolbar > * { min-width: 100%; }
         }
     </style>
 </head>
