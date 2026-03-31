@@ -12,7 +12,7 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
     try {
         $discordRoles = discord_get_guild_roles($guildId);
-        $botRoleFlags = is_array($_POST['is_bot_role'] ?? null) ? $_POST['is_bot_role'] : [];
+        $isBotFlags = is_array($_POST['is_bot_role'] ?? null) ? $_POST['is_bot_role'] : [];
         $protectedFlags = is_array($_POST['is_protected_role'] ?? null) ? $_POST['is_protected_role'] : [];
 
         $upsert = $pdo->prepare('INSERT INTO discord_role_flags (discord_guild_id, discord_role_id, role_name_cache, position_cache, is_bot_role, is_protected_role)
@@ -24,17 +24,18 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
             $roleId = (string)$role['id'];
+            $isManaged = !empty($role['managed']);
             $upsert->execute([
                 'guild_id' => $guildId,
                 'role_id' => $roleId,
                 'role_name' => (string)$role['name'],
                 'position_cache' => (int)$role['position'],
-                'is_bot_role' => isset($botRoleFlags[$roleId]) ? 1 : 0,
+                'is_bot_role' => $isManaged || isset($isBotFlags[$roleId]) ? 1 : 0,
                 'is_protected_role' => isset($protectedFlags[$roleId]) ? 1 : 0,
             ]);
         }
 
-        flash('success', 'Role flags saved.');
+        flash('success', 'Role management settings saved.');
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
@@ -66,8 +67,8 @@ if (!$missingTables) {
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
-    <h2>Role Flags</h2>
-    <p class="muted">Bot roles are roles this app is allowed to manage. Protected roles are roles that later sync logic must never remove from members.</p>
+    <h2>Role Management</h2>
+    <p class="muted">Use this page to classify Discord roles. “Is Bot” is forced on for Discord-managed or integration-managed roles. Protected roles are roles that later sync logic must never remove from members.</p>
 </div>
 
 <?php if ($missingTables): ?>
@@ -82,7 +83,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <th>Position</th>
                 <th>Managed</th>
                 <th>Rank Mapping</th>
-                <th>Bot Role</th>
+                <th>Is Bot</th>
                 <th>Protected Role</th>
             </tr>
         </thead>
@@ -92,19 +93,29 @@ require_once __DIR__ . '/../../app/views/header.php';
             $roleId = (string)$role['id'];
             $flags = $existingFlags[$roleId] ?? null;
             $mappedRanks = $mappedRoleNames[$roleId] ?? [];
+            $isManaged = !empty($role['managed']);
+            $isBot = $isManaged || ($flags && (int)$flags['is_bot_role'] === 1);
         ?>
             <tr>
                 <td><strong><?= h((string)$role['name']) ?></strong><br><span class="small muted"><?= h($roleId) ?></span></td>
                 <td><?= h((string)$role['position']) ?></td>
-                <td><?= !empty($role['managed']) ? 'Yes' : 'No' ?></td>
+                <td><?= $isManaged ? 'Yes' : 'No' ?></td>
                 <td><?= $mappedRanks ? h(implode(', ', $mappedRanks)) : '<span class="muted">—</span>' ?></td>
-                <td><label><input type="checkbox" name="is_bot_role[<?= h($roleId) ?>]" <?= $flags && (int)$flags['is_bot_role'] === 1 ? 'checked' : '' ?>> Bot-managed</label></td>
+                <td>
+                    <label>
+                        <input type="checkbox" name="is_bot_role[<?= h($roleId) ?>]" <?= $isBot ? 'checked' : '' ?> <?= $isManaged ? 'disabled' : '' ?>>
+                        Is Bot
+                    </label>
+                    <?php if ($isManaged): ?>
+                        <div class="small muted">Forced on because this role is Discord-managed.</div>
+                    <?php endif; ?>
+                </td>
                 <td><label><input type="checkbox" name="is_protected_role[<?= h($roleId) ?>]" <?= $flags && (int)$flags['is_protected_role'] === 1 ? 'checked' : '' ?>> Protected</label></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
-    <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Flags</button></p>
+    <p style="margin-top:16px"><button class="btn-primary" type="submit">Save Role Management</button></p>
 </form>
 <?php endif; ?>
 <?php require_once __DIR__ . '/../../app/views/footer.php'; ?>

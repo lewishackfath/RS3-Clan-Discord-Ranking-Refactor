@@ -133,6 +133,8 @@ function require_tables(PDO $pdo, array $tables): array
 function rs_rank_order(): array
 {
     return [
+        'Guest',
+        'Clan Member',
         'Recruit',
         'Corporal',
         'Sergeant',

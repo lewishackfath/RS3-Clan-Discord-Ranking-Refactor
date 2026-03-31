@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS rs_rank_mappings (
     is_enabled TINYINT(1) NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_rs_rank_mappings (clan_id, rs_rank_name),
+    KEY idx_rs_rank_mappings_rank (clan_id, rs_rank_name),
+    UNIQUE KEY uq_rs_rank_mappings_role (clan_id, rs_rank_name, discord_role_id),
     KEY idx_rs_rank_mappings_role (discord_role_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -74,6 +75,8 @@ CREATE TABLE IF NOT EXISTS discord_user_mappings (
 
 INSERT INTO rs_rank_mappings (clan_id, rs_rank_name, discord_role_id, discord_role_name_cache, is_enabled)
 VALUES
+    (1, 'Guest', NULL, NULL, 1),
+    (1, 'Clan Member', NULL, NULL, 1),
     (1, 'Recruit', NULL, NULL, 1),
     (1, 'Corporal', NULL, NULL, 1),
     (1, 'Sergeant', NULL, NULL, 1),

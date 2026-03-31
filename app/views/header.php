@@ -93,7 +93,7 @@ function nav_active(string $needle, string $path): string { return str_contains(
             <a class="<?= nav_active('/admin/index.php', $path) ?>" href="/admin/index.php">Dashboard</a>
             <a class="<?= nav_active('/admin/clan-members.php', $path) ?>" href="/admin/clan-members.php">Clan Members</a>
             <a class="<?= nav_active('/admin/role-mappings.php', $path) ?>" href="/admin/role-mappings.php">Role Mappings</a>
-            <a class="<?= nav_active('/admin/roles.php', $path) ?>" href="/admin/roles.php">Role Flags</a>
+            <a class="<?= nav_active('/admin/roles.php', $path) ?>" href="/admin/roles.php">Role Management</a>
             <a class="<?= nav_active('/admin/user-mappings.php', $path) ?>" href="/admin/user-mappings.php">User Mappings</a>
         </nav>
     </aside>
