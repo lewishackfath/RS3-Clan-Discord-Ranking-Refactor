@@ -10,7 +10,7 @@ function nav_active(string $needle, string $path): string { return str_contains(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= h(env('APP_NAME', 'RS3 Clan Ranker')) ?></title>
+    <title><?= h(env('APP_NAME', 'RS3 Clan Discord Ranker')) ?></title>
     <style>
         :root {
             color-scheme: dark;
@@ -31,7 +31,11 @@ function nav_active(string $needle, string $path): string { return str_contains(
         a:hover { text-decoration: underline; }
         .layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
         .sidebar { background: #0b1220; border-right: 1px solid var(--line); padding: 24px 18px; }
-        .brand { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+        .brand-wrap { display:grid; gap:14px; margin-bottom: 6px; }
+        .brand-company-logo { display:block; width:100%; max-width:180px; height:auto; }
+        .brand-clan { display:flex; align-items:center; gap:12px; min-width:0; }
+        .brand-clan-logo { width:44px; height:44px; border-radius:12px; object-fit:cover; border:1px solid var(--line); background:#0b1220; flex:0 0 auto; }
+        .brand-title { font-size: 20px; font-weight: 700; line-height:1.2; }
         .muted { color: var(--muted); }
         .nav { display: grid; gap: 8px; margin-top: 24px; }
         .nav a { display: block; padding: 10px 12px; border-radius: 10px; color: var(--text); }
@@ -101,8 +105,19 @@ function nav_active(string $needle, string $path): string { return str_contains(
 <body>
 <div class="layout">
     <aside class="sidebar">
-        <div class="brand"><?= h(env('APP_NAME', 'RS3 Clan Ranker')) ?></div>
-        <div class="muted small">Phase 1 • PHP-only admin</div>
+        <?php $clanLogoUrl = trim((string)env('CLAN_LOGO_URL', '')); ?>
+        <div class="brand-wrap">
+            <img class="brand-company-logo" src="/assets/logo.png" alt="HIT Media">
+            <div class="brand-clan">
+                <?php if ($clanLogoUrl !== ''): ?>
+                    <img class="brand-clan-logo" src="<?= h($clanLogoUrl) ?>" alt="Clan logo">
+                <?php endif; ?>
+                <div>
+                    <div class="brand-title"><?= h(env('APP_NAME', 'RS3 Clan Discord Ranker')) ?></div>
+                    <div class="muted small">RS3 Clan Role Management</div>
+                </div>
+            </div>
+        </div>
         <nav class="nav">
             <a class="<?= nav_active('/admin/index.php', $path) ?>" href="/admin/index.php">Dashboard</a>
             <a class="<?= nav_active('/admin/clan-members.php', $path) ?>" href="/admin/clan-members.php">Clan Members</a>

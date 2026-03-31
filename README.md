@@ -1,8 +1,8 @@
-# RS3 Clan Discord Ranker - Phase 1.1 patch pack
+# RS3 Clan Discord Ranker
 
 This patch pack keeps the PHP-only architecture and fixes the first-round setup/auth issues.
 
-## What changed in Phase 1.1
+## Overview
 
 - Fixed first-login admin authorisation bug in Discord OAuth callback
 - Hardened session handling
@@ -44,11 +44,11 @@ This patch pack keeps the PHP-only architecture and fixes the first-round setup/
 
 ## Notes
 
-- This is still Phase 1 only. It does not perform automated role sync jobs yet.
+- Production-ready Discord role sync and admin tooling are included in this build.
 - If your guild is large, the user mappings page may take longer because it reads guild members directly from Discord.
 - The `Clan Members` page exists so you can seed and maintain the clan member list without needing another tool first.
 
-## Phase 1.2 import update
+## Import update
 
 - Added direct RuneScape clan roster import from `members_lite.ws`
 - New `CLAN_NAME` setting in `.env`
@@ -57,7 +57,7 @@ This patch pack keeps the PHP-only architecture and fixes the first-round setup/
 - Safety guard: if the API parses 0 members, no database writes are made
 
 
-## Phase 1.3
+## Additional updates
 
 This pack improves the User Mappings page with:
 - manual-only saved mappings
@@ -73,7 +73,7 @@ This pack improves the User Mappings page with:
 - User Mapping dropdowns now include a built-in search field that filters the RSN list by name, normalised RSN, or rank.
 
 
-## Phase 1.4 patch
+## Role mapping update
 This patch adds:
 - multi-select role mappings so one RuneScape rank can map to multiple Discord roles
 - Guest and Clan Member mapping rows

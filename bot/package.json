@@ -2,7 +2,7 @@
   "name": "rs3-clan-discord-ranker-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Phase 1 bot service for RS3 clan Discord rank admin",
+  "description": "Bot service for RS3 clan Discord rank admin",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

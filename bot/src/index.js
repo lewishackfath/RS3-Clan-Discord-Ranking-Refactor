@@ -143,7 +143,7 @@ app.post('/guild/roles', async (req, res) => {
 
     const role = await guild.roles.create({
       name,
-      reason: 'Phase 1 admin role mapping setup',
+      reason: 'Admin role mapping setup',
       mentionable: false,
     });
 
