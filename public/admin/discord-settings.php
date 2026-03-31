@@ -20,6 +20,10 @@ $requiredColumns = [
     'last_roster_import_message',
     'last_auto_sync_status',
     'last_auto_sync_message',
+    'server_admin_role_id',
+    'server_admin_role_name_cache',
+    'server_moderator_role_id',
+    'server_moderator_role_name_cache',
 ];
 
 $missingTables = require_tables($pdo, ['guild_settings']);
@@ -71,6 +75,7 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
     try {
         $guild = discord_get_guild($guildId);
         $channels = discord_get_guild_text_channels($guildId);
+        $roles = discord_get_guild_roles($guildId);
         $validChannelIds = [];
         $channelNames = [];
         foreach ($channels as $channel) {
@@ -81,10 +86,29 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
             $validChannelIds[$channelId] = true;
             $channelNames[$channelId] = (string)($channel['name'] ?? '');
         }
+        foreach ($roles as $role) {
+            $roleId = (string)($role['id'] ?? '');
+            $roleName = trim((string)($role['name'] ?? ''));
+            if ($roleId === '' || $roleName === '' || $roleName === '@everyone') {
+                continue;
+            }
+            $validRoleIds[$roleId] = true;
+            $roleNames[$roleId] = $roleName;
+        }
 
         $logChannelId = trim((string)($_POST['log_channel_id'] ?? ''));
         if ($logChannelId !== '' && !isset($validChannelIds[$logChannelId])) {
             throw new RuntimeException('Please choose a valid guild text channel for the log channel.');
+        }
+
+        $serverAdminRoleId = trim((string)($_POST['server_admin_role_id'] ?? ''));
+        if ($serverAdminRoleId !== '' && !isset($validRoleIds[$serverAdminRoleId])) {
+            throw new RuntimeException('Please choose a valid guild role for the server admin role.');
+        }
+
+        $serverModeratorRoleId = trim((string)($_POST['server_moderator_role_id'] ?? ''));
+        if ($serverModeratorRoleId !== '' && !isset($validRoleIds[$serverModeratorRoleId])) {
+            throw new RuntimeException('Please choose a valid guild role for the server moderator role.');
         }
 
         $sendGuestDm = isset($_POST['send_guest_dm']) ? 1 : 0;
@@ -108,7 +132,11 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 send_guest_dm,
                 guest_dm_message,
                 auto_sync_enabled,
-                auto_sync_interval_minutes
+                auto_sync_interval_minutes,
+                server_admin_role_id,
+                server_admin_role_name_cache,
+                server_moderator_role_id,
+                server_moderator_role_name_cache
             ) VALUES (
                 :clan_id,
                 :guild_id,
@@ -118,7 +146,11 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 :send_guest_dm,
                 :guest_dm_message,
                 :auto_sync_enabled,
-                :auto_sync_interval_minutes
+                :auto_sync_interval_minutes,
+                :server_admin_role_id,
+                :server_admin_role_name_cache,
+                :server_moderator_role_id,
+                :server_moderator_role_name_cache
             )
             ON DUPLICATE KEY UPDATE
                 discord_guild_id = VALUES(discord_guild_id),
@@ -128,7 +160,11 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
                 send_guest_dm = VALUES(send_guest_dm),
                 guest_dm_message = VALUES(guest_dm_message),
                 auto_sync_enabled = VALUES(auto_sync_enabled),
-                auto_sync_interval_minutes = VALUES(auto_sync_interval_minutes)');
+                auto_sync_interval_minutes = VALUES(auto_sync_interval_minutes),
+                server_admin_role_id = VALUES(server_admin_role_id),
+                server_admin_role_name_cache = VALUES(server_admin_role_name_cache),
+                server_moderator_role_id = VALUES(server_moderator_role_id),
+                server_moderator_role_name_cache = VALUES(server_moderator_role_name_cache)');
 
         $stmt->execute([
             'clan_id' => $clanId,
@@ -140,6 +176,10 @@ if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST'
             'guest_dm_message' => $guestDmMessage !== '' ? $guestDmMessage : null,
             'auto_sync_enabled' => $autoSyncEnabled,
             'auto_sync_interval_minutes' => $autoSyncInterval,
+            'server_admin_role_id' => $serverAdminRoleId !== '' ? $serverAdminRoleId : null,
+            'server_admin_role_name_cache' => $serverAdminRoleId !== '' ? ($roleNames[$serverAdminRoleId] ?? null) : null,
+            'server_moderator_role_id' => $serverModeratorRoleId !== '' ? $serverModeratorRoleId : null,
+            'server_moderator_role_name_cache' => $serverModeratorRoleId !== '' ? ($roleNames[$serverModeratorRoleId] ?? null) : null,
         ]);
 
         flash('success', 'Discord settings saved.');
@@ -177,6 +217,7 @@ if (!$missingTables && !$missingColumns) {
     try {
         $guild = discord_get_guild($guildId);
         $channels = discord_get_guild_text_channels($guildId);
+        $roles = discord_get_guild_roles($guildId);
 
         $stmt = $pdo->prepare('SELECT * FROM guild_settings WHERE clan_id = :clan_id LIMIT 1');
         $stmt->execute(['clan_id' => $clanId]);
@@ -236,7 +277,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <li><code><?= h($column) ?></code></li>
             <?php endforeach; ?>
         </ul>
-        <p class="muted small">Run <code>sql/migrations/phase3.2.2-auto-sync-status-visibility.sql</code> after <code>phase3.2-auto-sync-scheduler.sql</code>.</p>
+        <p class="muted small">Run <code>sql/migrations/phase3.3-failure-alert-roles.sql</code> after the earlier phase 3 migrations.</p>
     </div>
 <?php else: ?>
 <div class="grid two">
@@ -349,6 +390,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <tr><th>Server</th><td><?= h((string)($guild['name'] ?? $settings['guild_name_cache'] ?? '')) ?></td></tr>
                     <tr><th>Guild ID</th><td class="mono"><?= h($guildId) ?></td></tr>
                     <tr><th>Text Channels</th><td><?= h((string)count($channels)) ?></td></tr>
+                    <tr><th>Roles</th><td><?= h((string)count($roles)) ?></td></tr>
                 </tbody>
             </table>
         </div>
@@ -376,7 +418,41 @@ require_once __DIR__ . '/../../app/views/header.php';
                     </option>
                 <?php endforeach; ?>
             </select>
-            <p class="hint">Used for per-user live sync embeds and final sync summaries.</p>
+            <p class="hint">Used for per-user live sync embeds, failure alerts, and final sync summaries when something actually changed.</p>
+        </div>
+
+        <div>
+            <label for="server_admin_role_id"><strong>Server Admin Role</strong></label>
+            <select id="server_admin_role_id" name="server_admin_role_id">
+                <option value="">No server admin role configured</option>
+                <?php foreach ($roles as $role): ?>
+                    <?php $roleId = (string)($role['id'] ?? ''); ?>
+                    <?php $roleName = trim((string)($role['name'] ?? '')); ?>
+                    <?php if ($roleId === '' || $roleName === '' || $roleName === '@everyone') { continue; } ?>
+                    <option value="<?= h($roleId) ?>" <?= $roleId === (string)($settings['server_admin_role_id'] ?? '') ? 'selected' : '' ?>>
+                        <?= h($roleName) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <p class="hint">Mentioned when a sync fails.</p>
+        </div>
+    </div>
+
+    <div class="grid two" style="margin-top:18px">
+        <div>
+            <label for="server_moderator_role_id"><strong>Server Moderator Role</strong></label>
+            <select id="server_moderator_role_id" name="server_moderator_role_id">
+                <option value="">No server moderator role configured</option>
+                <?php foreach ($roles as $role): ?>
+                    <?php $roleId = (string)($role['id'] ?? ''); ?>
+                    <?php $roleName = trim((string)($role['name'] ?? '')); ?>
+                    <?php if ($roleId === '' || $roleName === '' || $roleName === '@everyone') { continue; } ?>
+                    <option value="<?= h($roleId) ?>" <?= $roleId === (string)($settings['server_moderator_role_id'] ?? '') ? 'selected' : '' ?>>
+                        <?= h($roleName) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <p class="hint">Also mentioned when a sync fails.</p>
         </div>
 
         <div>

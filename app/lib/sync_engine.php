@@ -18,6 +18,66 @@ function sync_build_role_name_list(array $roleIds, array $roleMap): string
     return $names ? implode(', ', $names) : 'None';
 }
 
+
+function sync_failure_mention_text(array $guildSettings): string
+{
+    $roleIds = [];
+    foreach (['server_admin_role_id', 'server_moderator_role_id'] as $key) {
+        $roleId = trim((string)($guildSettings[$key] ?? ''));
+        if ($roleId !== '') {
+            $roleIds[] = $roleId;
+        }
+    }
+
+    $roleIds = array_values(array_unique($roleIds));
+    if ($roleIds === []) {
+        return '';
+    }
+
+    return implode(' ', array_map(static fn(string $roleId): string => '<@&' . $roleId . '>', $roleIds));
+}
+
+function sync_send_failure_alert(array $guildSettings, string $title, string $stage, string $message, string $triggerSource = 'manual'): void
+{
+    $logChannelId = trim((string)($guildSettings['log_channel_id'] ?? ''));
+    if ($logChannelId === '') {
+        return;
+    }
+
+    $mentionText = sync_failure_mention_text($guildSettings);
+    if ($mentionText !== '') {
+        discord_send_channel_message($logChannelId, $mentionText);
+    }
+
+    $embed = [
+        'title' => $title,
+        'color' => 15158332,
+        'fields' => [
+            [
+                'name' => 'Trigger Source',
+                'value' => ucfirst($triggerSource),
+                'inline' => true,
+            ],
+            [
+                'name' => 'Stage',
+                'value' => $stage,
+                'inline' => true,
+            ],
+            [
+                'name' => 'Error',
+                'value' => $message !== '' ? $message : 'Unknown error',
+                'inline' => false,
+            ],
+        ],
+        'footer' => [
+            'text' => 'RS3 Clan Ranker',
+        ],
+        'timestamp' => gmdate('c'),
+    ];
+
+    discord_send_channel_embed($logChannelId, $embed);
+}
+
 function sync_maybe_log_member_change_embed(array $guildSettings, array $summaryMember, ?array $resolvedMember, string $rankName, array $addRoleIds, array $removeRoleIds, array $currentRoleIds, array $roleMap): void
 {
     $logChannelId = trim((string)($guildSettings['log_channel_id'] ?? ''));
@@ -135,6 +195,10 @@ function execute_sync_run(PDO $pdo, string $guildId, int $clanId, array $options
         $initiatedByName = $triggerSource === 'auto' ? 'Automatic Scheduler' : 'Admin';
     }
 
+    $settingsStmt = $pdo->prepare('SELECT * FROM guild_settings WHERE clan_id = :clan_id LIMIT 1');
+    $settingsStmt->execute(['clan_id' => $clanId]);
+    $guildSettings = $settingsStmt->fetch() ?: [];
+
     $hasTriggerSourceColumn = column_exists($pdo, 'sync_runs', 'trigger_source');
     if ($hasTriggerSourceColumn) {
         $runStmt = $pdo->prepare('INSERT INTO sync_runs (
@@ -237,10 +301,6 @@ function execute_sync_run(PDO $pdo, string $guildId, int $clanId, array $options
                 $clanByNormalised[$norm] = $member;
             }
         }
-
-        $settingsStmt = $pdo->prepare('SELECT * FROM guild_settings WHERE clan_id = :clan_id LIMIT 1');
-        $settingsStmt->execute(['clan_id' => $clanId]);
-        $guildSettings = $settingsStmt->fetch() ?: [];
 
         $memberLogStmt = $pdo->prepare('INSERT INTO sync_run_members (
             sync_run_id, discord_user_id, discord_username, discord_display_name, resolved_rsn, resolved_rank_name, resolved_by,
@@ -470,8 +530,16 @@ function execute_sync_run(PDO $pdo, string $guildId, int $clanId, array $options
             $summaryText
         );
 
+        $shouldPostSummary = (
+            (int)$counts['changed'] > 0
+            || (int)$counts['blocked'] > 0
+            || (int)$counts['errors'] > 0
+            || (int)$counts['guest_dm_sent'] > 0
+            || (int)$counts['guest_dm_failed'] > 0
+        );
+
         $logChannelId = trim((string)($guildSettings['log_channel_id'] ?? ''));
-        if ($logChannelId !== '') {
+        if ($shouldPostSummary && $logChannelId !== '') {
             try {
                 discord_send_channel_message($logChannelId, 'Sync summary: ' . $summaryText);
             } catch (Throwable $ignored) {
@@ -482,6 +550,10 @@ function execute_sync_run(PDO $pdo, string $guildId, int $clanId, array $options
     } catch (Throwable $e) {
         $summaryText = ucfirst($triggerSource) . ' sync failed: ' . $e->getMessage();
         sync_update_run_status($pdo, $syncRunId, $counts, 'failed', $summaryText);
+        try {
+            sync_send_failure_alert($guildSettings, '❌ Sync Failed', 'Live Sync Execution', $e->getMessage(), $triggerSource);
+        } catch (Throwable $ignored) {
+        }
         throw $e;
     }
 }
@@ -511,6 +583,11 @@ function perform_auto_sync_for_clan(PDO $pdo, int $clanId, string $guildId, arra
     if ($clanId <= 0) {
         throw new RuntimeException('A valid clan ID is required for automatic sync.');
     }
+
+    $settingsStmt = $pdo->prepare('SELECT * FROM guild_settings WHERE clan_id = :clan_id LIMIT 1');
+    $settingsStmt->execute(['clan_id' => $clanId]);
+    $guildSettings = $settingsStmt->fetch() ?: [];
+
     $guildId = trim($guildId);
     if ($guildId === '') {
         throw new RuntimeException('A valid Discord guild ID is required for automatic sync.');
@@ -525,6 +602,10 @@ function perform_auto_sync_for_clan(PDO $pdo, int $clanId, string $guildId, arra
             'last_auto_sync_status' => 'error',
             'last_auto_sync_message' => 'Automatic sync skipped because CLAN_NAME is missing from .env.',
         ]);
+        try {
+            sync_send_failure_alert($guildSettings, '❌ Auto Sync Failed', 'Roster Import', 'CLAN_NAME is missing from .env.', (string)($options['trigger_source'] ?? 'auto'));
+        } catch (Throwable $ignored) {
+        }
         throw new RuntimeException('CLAN_NAME is missing from .env.');
     }
 
@@ -555,6 +636,10 @@ function perform_auto_sync_for_clan(PDO $pdo, int $clanId, string $guildId, arra
             'last_auto_sync_status' => 'error',
             'last_auto_sync_message' => 'Automatic sync skipped because the latest RuneScape roster import failed.',
         ]);
+        try {
+            sync_send_failure_alert($guildSettings, '❌ Auto Sync Failed', 'Roster Import', $e->getMessage(), (string)($options['trigger_source'] ?? 'auto'));
+        } catch (Throwable $ignored) {
+        }
         throw $e;
     }
 
