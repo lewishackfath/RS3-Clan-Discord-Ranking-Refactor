@@ -111,6 +111,40 @@ function discord_get_guild_roles(string $guildId): array
     return $response['json'];
 }
 
+
+
+function discord_get_guild_channels(string $guildId): array
+{
+    $response = discord_request('GET', '/guilds/' . rawurlencode($guildId) . '/channels', null, discord_bot_headers());
+    if ($response['status'] < 200 || $response['status'] >= 300 || !is_array($response['json'])) {
+        throw new RuntimeException('Failed to fetch guild channels.');
+    }
+    return $response['json'];
+}
+
+function discord_get_guild_text_channels(string $guildId): array
+{
+    $channels = discord_get_guild_channels($guildId);
+    $textChannels = [];
+    foreach ($channels as $channel) {
+        $type = (int)($channel['type'] ?? -1);
+        if (in_array($type, [0, 5], true)) {
+            $textChannels[] = $channel;
+        }
+    }
+
+    usort($textChannels, static function (array $a, array $b): int {
+        $aPos = (int)($a['position'] ?? 0);
+        $bPos = (int)($b['position'] ?? 0);
+        if ($aPos !== $bPos) {
+            return $aPos <=> $bPos;
+        }
+        return strcmp((string)($a['name'] ?? ''), (string)($b['name'] ?? ''));
+    });
+
+    return $textChannels;
+}
+
 function discord_get_guild_member(string $guildId, string $userId): ?array
 {
     $response = discord_request('GET', '/guilds/' . rawurlencode($guildId) . '/members/' . rawurlencode($userId), null, discord_bot_headers());

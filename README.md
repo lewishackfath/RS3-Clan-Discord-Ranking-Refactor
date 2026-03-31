@@ -97,3 +97,8 @@ It:
 - reads current role mappings and role management flags
 - shows current roles, target roles, add/remove previews, and blocked hierarchy cases
 - does **not** apply any Discord role changes yet
+
+
+## Phase 2.1 migration
+
+Run `sql/migrations/phase2.1-discord-settings.sql` before using the Discord Settings page.
