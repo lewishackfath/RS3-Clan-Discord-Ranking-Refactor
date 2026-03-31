@@ -75,6 +75,18 @@ function nav_active(string $needle, string $path): string { return str_contains(
         .w-compact { width: 240px; }
         .member-picker { display: grid; gap: 8px; min-width: 260px; }
         .mapping-search { font-size: 13px; }
+        .role-chip-wrap { display:flex; flex-wrap:wrap; gap:6px; }
+        .role-chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); background:#0b1220; border-radius:999px; padding:4px 10px; font-size:12px; white-space:nowrap; }
+        .role-chip.bot { border-color:#4f46e5; color:#c7d2fe; }
+        .role-chip.protected { border-color:#d97706; color:#fdba74; }
+        .role-chip.add { border-color:#166534; color:#86efac; }
+        .role-chip.remove { border-color:#991b1b; color:#fca5a5; }
+        .role-chip.keep { border-color:#374151; color:#cbd5e1; }
+        .role-chip.dim { opacity:.8; }
+        .preview-grid { display:grid; gap:18px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+        .preview-grid .stat { min-height: 100%; }
+        .code-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); background:#0b1220; }
+
         @media (max-width: 980px) {
             .layout { grid-template-columns: 1fr; }
             .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -95,6 +107,7 @@ function nav_active(string $needle, string $path): string { return str_contains(
             <a class="<?= nav_active('/admin/role-mappings.php', $path) ?>" href="/admin/role-mappings.php">Role Mappings</a>
             <a class="<?= nav_active('/admin/roles.php', $path) ?>" href="/admin/roles.php">Role Management</a>
             <a class="<?= nav_active('/admin/user-mappings.php', $path) ?>" href="/admin/user-mappings.php">User Mappings</a>
+            <a class="<?= nav_active('/admin/sync-preview.php', $path) ?>" href="/admin/sync-preview.php">Sync Preview</a>
         </nav>
     </aside>
     <main class="main">

@@ -85,3 +85,15 @@ Run the migration in:
 `sql/migrations/phase1.4-role-mapping-multiselect.sql`
 
 before opening the updated Role Mappings page.
+
+
+## Phase 2.0 – Sync Preview
+
+This pack adds a dry-run **Sync Preview** page at `/admin/sync-preview.php`.
+
+It:
+- resolves Discord users to RuneScape members using manual mappings first, nickname fallback second
+- reads imported clan rank data
+- reads current role mappings and role management flags
+- shows current roles, target roles, add/remove previews, and blocked hierarchy cases
+- does **not** apply any Discord role changes yet
