@@ -142,6 +142,7 @@ function rs_rank_order(): array
         'Captain',
         'General',
         'Admin',
+        'Organizer',
         'Coordinator',
         'Overseer',
         'Deputy Owner',
