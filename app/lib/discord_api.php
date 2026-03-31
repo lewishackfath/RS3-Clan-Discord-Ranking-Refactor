@@ -343,3 +343,49 @@ function validate_bot_readiness(string $guildId, array $mappedRoleIds = [], arra
         'messages' => $messages,
     ];
 }
+
+
+function discord_modify_member_roles(string $guildId, string $userId, array $roleIds): void
+{
+    $cleanRoleIds = array_values(array_unique(array_map('strval', array_filter($roleIds, static fn($roleId): bool => (string)$roleId !== ''))));
+    $response = discord_request('PATCH', '/guilds/' . rawurlencode($guildId) . '/members/' . rawurlencode($userId), [
+        'roles' => $cleanRoleIds,
+    ], discord_bot_headers());
+
+    if ($response['status'] < 200 || $response['status'] >= 300) {
+        throw new RuntimeException('Failed to update roles for guild member ' . $userId . '.');
+    }
+}
+
+function discord_create_dm_channel(string $userId): string
+{
+    $response = discord_request('POST', '/users/@me/channels', [
+        'recipient_id' => $userId,
+    ], discord_bot_headers());
+
+    if ($response['status'] < 200 || $response['status'] >= 300 || !is_array($response['json'])) {
+        throw new RuntimeException('Failed to create DM channel for user ' . $userId . '.');
+    }
+
+    return (string)($response['json']['id'] ?? '');
+}
+
+function discord_send_channel_message(string $channelId, string $content): void
+{
+    $response = discord_request('POST', '/channels/' . rawurlencode($channelId) . '/messages', [
+        'content' => $content,
+    ], discord_bot_headers());
+
+    if ($response['status'] < 200 || $response['status'] >= 300) {
+        throw new RuntimeException('Failed to send Discord message to channel ' . $channelId . '.');
+    }
+}
+
+function discord_send_dm(string $userId, string $content): void
+{
+    $channelId = discord_create_dm_channel($userId);
+    if ($channelId === '') {
+        throw new RuntimeException('Failed to create DM channel for user ' . $userId . '.');
+    }
+    discord_send_channel_message($channelId, $content);
+}
