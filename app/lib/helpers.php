@@ -85,13 +85,76 @@ function normalise_match_source(string $value): string
     $value = trim($value);
     $value = mb_strtolower($value, 'UTF-8');
     $value = str_replace(' ', '_', $value);
+    $value = preg_replace('/_+/u', '_', $value) ?? $value;
     $value = preg_replace('/[\p{Cc}\p{Cf}]/u', '', $value) ?? $value;
+    return trim($value, '_');
+}
 
-    if (mb_strlen($value, 'UTF-8') > 12) {
-        $value = mb_substr($value, 0, 12, 'UTF-8');
+function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $candidateSources): array
+{
+    $candidateNorms = [];
+    foreach ($candidateSources as $candidateSource) {
+        $candidateNorm = normalise_match_source((string)$candidateSource);
+        if ($candidateNorm !== '') {
+            $candidateNorms[$candidateNorm] = $candidateNorm;
+        }
     }
 
-    return $value;
+    if ($candidateNorms === []) {
+        return ['member' => null, 'match_type' => 'none', 'ambiguous' => false];
+    }
+
+    foreach ($candidateNorms as $candidateNorm) {
+        if (isset($membersByNormalisedRsn[$candidateNorm])) {
+            return ['member' => $membersByNormalisedRsn[$candidateNorm], 'match_type' => 'exact', 'ambiguous' => false];
+        }
+    }
+
+    $tokenMatches = [];
+    foreach ($candidateNorms as $candidateNorm) {
+        foreach ($membersByNormalisedRsn as $rsnNorm => $member) {
+            if ($rsnNorm === '') {
+                continue;
+            }
+            $pattern = '/(^|_)' . preg_quote((string)$rsnNorm, '/') . '(_|$)/u';
+            if (preg_match($pattern, $candidateNorm) === 1) {
+                $tokenMatches[(string)($member['id'] ?? $rsnNorm)] = $member;
+            }
+        }
+    }
+    if (count($tokenMatches) === 1) {
+        return ['member' => array_values($tokenMatches)[0], 'match_type' => 'contains', 'ambiguous' => false];
+    }
+    if (count($tokenMatches) > 1) {
+        return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
+    }
+
+    $containsMatches = [];
+    $longestLength = 0;
+    foreach ($candidateNorms as $candidateNorm) {
+        foreach ($membersByNormalisedRsn as $rsnNorm => $member) {
+            if ($rsnNorm === '' || !str_contains($candidateNorm, (string)$rsnNorm)) {
+                continue;
+            }
+            $length = mb_strlen((string)$rsnNorm, 'UTF-8');
+            $key = (string)($member['id'] ?? $rsnNorm);
+            if ($length > $longestLength) {
+                $containsMatches = [$key => $member];
+                $longestLength = $length;
+            } elseif ($length === $longestLength) {
+                $containsMatches[$key] = $member;
+            }
+        }
+    }
+
+    if (count($containsMatches) === 1) {
+        return ['member' => array_values($containsMatches)[0], 'match_type' => 'contains', 'ambiguous' => false];
+    }
+    if (count($containsMatches) > 1) {
+        return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
+    }
+
+    return ['member' => null, 'match_type' => 'none', 'ambiguous' => false];
 }
 
 function now_utc(): string

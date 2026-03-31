@@ -73,11 +73,11 @@ $discordMembers = [];
 $manualMappings = [];
 $clanMembers = [];
 $memberByNormalisedRsn = [];
-$summaryCounts = ['all' => 0, 'manual' => 0, 'nickname' => 0, 'unmatched' => 0];
+$summaryCounts = ['all' => 0, 'manual' => 0, 'nickname' => 0, 'ambiguous' => 0, 'unmatched' => 0];
 
 $search = trim((string)($_GET['search'] ?? ''));
 $statusFilter = trim((string)($_GET['status'] ?? 'all'));
-$allowedStatus = ['all', 'manual', 'nickname', 'unmatched'];
+$allowedStatus = ['all', 'manual', 'nickname', 'ambiguous', 'unmatched'];
 if (!in_array($statusFilter, $allowedStatus, true)) {
     $statusFilter = 'all';
 }
@@ -115,18 +115,12 @@ if (!$missingTables) {
         $username = (string)$summary['username'];
         $displayName = (string)$summary['display_name'];
 
-        $nicknameMatch = null;
-        if ($nickname !== '') {
-            $nicknameMatch = $memberByNormalisedRsn[normalise_match_source($nickname)] ?? null;
-        }
-        if ($nicknameMatch === null && $displayName !== '') {
-            $nicknameMatch = $memberByNormalisedRsn[normalise_match_source($displayName)] ?? null;
-        }
-        if ($nicknameMatch === null && $username !== '') {
-            $nicknameMatch = $memberByNormalisedRsn[normalise_match_source($username)] ?? null;
-        }
+        $fallbackMatch = resolve_clan_member_fallback($memberByNormalisedRsn, [$nickname, $displayName, $username]);
+        $nicknameMatch = $fallbackMatch['member'] ?? null;
+        $nicknameMatchType = (string)($fallbackMatch['match_type'] ?? 'none');
+        $isAmbiguous = !empty($fallbackMatch['ambiguous']);
 
-        $statusKey = $manual ? 'manual' : ($nicknameMatch ? 'nickname' : 'unmatched');
+        $statusKey = $manual ? 'manual' : ($nicknameMatch ? 'nickname' : ($isAmbiguous ? 'ambiguous' : 'unmatched'));
         $summaryCounts['all']++;
         $summaryCounts[$statusKey]++;
 
@@ -175,6 +169,7 @@ if (!$missingTables) {
             'summary' => $summary,
             'manual' => $manual,
             'nickname_match' => $nicknameMatch,
+            'nickname_match_type' => $nicknameMatchType,
             'status_key' => $statusKey,
             'current_roles' => $currentRoles,
         ];
@@ -190,6 +185,7 @@ if (!$missingTables) {
 $statusMeta = [
     'manual' => ['label' => 'Manual Mapping', 'class' => 'ok'],
     'nickname' => ['label' => 'Nickname Match Available', 'class' => 'warn'],
+    'ambiguous' => ['label' => 'Ambiguous Nickname Match', 'class' => 'warn'],
     'unmatched' => ['label' => 'Unmatched', 'class' => 'bad'],
 ];
 
@@ -208,6 +204,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         <div class="stat"><div class="muted small">Discord members</div><div class="value"><?= h((string)$summaryCounts['all']) ?></div></div>
         <div class="stat"><div class="muted small">Manual mappings</div><div class="value"><?= h((string)$summaryCounts['manual']) ?></div></div>
         <div class="stat"><div class="muted small">Nickname matches</div><div class="value"><?= h((string)$summaryCounts['nickname']) ?></div></div>
+        <div class="stat"><div class="muted small">Ambiguous</div><div class="value"><?= h((string)$summaryCounts['ambiguous']) ?></div></div>
         <div class="stat"><div class="muted small">Unmatched</div><div class="value"><?= h((string)$summaryCounts['unmatched']) ?></div></div>
     </div>
 </div>
@@ -224,6 +221,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <option value="all" <?= $statusFilter === 'all' ? 'selected' : '' ?>>All statuses</option>
                 <option value="manual" <?= $statusFilter === 'manual' ? 'selected' : '' ?>>Manual Mapping</option>
                 <option value="nickname" <?= $statusFilter === 'nickname' ? 'selected' : '' ?>>Nickname Match Available</option>
+                <option value="ambiguous" <?= $statusFilter === 'ambiguous' ? 'selected' : '' ?>>Ambiguous Nickname Match</option>
                 <option value="unmatched" <?= $statusFilter === 'unmatched' ? 'selected' : '' ?>>Unmatched</option>
             </select>
         </div>

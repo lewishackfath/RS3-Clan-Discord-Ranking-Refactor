@@ -75,7 +75,7 @@ function preview_member_roles(array $roleIds, array $roleMap, array $roleFlags):
 
 $search = trim((string)($_GET['search'] ?? ''));
 $statusFilter = trim((string)($_GET['status'] ?? 'all'));
-$allowedStatus = ['all', 'ready_change', 'ready_no_change', 'blocked_hierarchy', 'no_match', 'no_rank_mapping'];
+$allowedStatus = ['all', 'ready_change', 'ready_no_change', 'blocked_hierarchy', 'ambiguous_match', 'no_match', 'no_rank_mapping'];
 if (!in_array($statusFilter, $allowedStatus, true)) {
     $statusFilter = 'all';
 }
@@ -88,6 +88,7 @@ $summary = [
     'ready_no_change' => 0,
     'blocked_hierarchy' => 0,
     'no_match' => 0,
+    'ambiguous_match' => 0,
     'no_rank_mapping' => 0,
 ];
 $errorMessage = null;
@@ -172,15 +173,9 @@ if (!$missingTables) {
                 $nickname = (string)$summaryMember['nickname'];
                 $displayName = (string)$summaryMember['display_name'];
                 $username = (string)$summaryMember['username'];
-
-                foreach ([$nickname, $displayName, $username] as $candidate) {
-                    $candidateNorm = normalise_match_source((string)$candidate);
-                    if ($candidateNorm !== '' && isset($clanByNormalised[$candidateNorm])) {
-                        $resolvedMember = $clanByNormalised[$candidateNorm];
-                        $resolvedBy = 'nickname';
-                        break;
-                    }
-                }
+                $fallbackMatch = resolve_clan_member_fallback($clanByNormalised, [$nickname, $displayName, $username]);
+                $resolvedMember = $fallbackMatch['member'] ?? null;
+                $resolvedBy = $resolvedMember ? ('nickname_' . (string)($fallbackMatch['match_type'] ?? 'exact')) : (!empty($fallbackMatch['ambiguous']) ? 'ambiguous' : 'none');
             }
 
             $currentRoleIds = array_values(array_filter(array_map('strval', $discordMember['roles'] ?? []), static fn(string $id): bool => $id !== ''));
@@ -218,7 +213,10 @@ if (!$missingTables) {
             $statusKey = 'ready_no_change';
             $issues = [];
 
-            if (!$resolvedMember) {
+            if ($resolvedBy === 'ambiguous') {
+                $statusKey = 'ambiguous_match';
+                $issues[] = 'Multiple RuneScape clan members partially matched this Discord name. Save a manual mapping to resolve it.';
+            } elseif (!$resolvedMember) {
                 $statusKey = 'no_match';
                 $issues[] = 'No RuneScape clan member match could be resolved from a manual mapping or nickname fallback.';
             } elseif ($targetRoleIds === []) {
@@ -327,8 +325,9 @@ if (!$missingTables) {
                 'blocked_hierarchy' => 0,
                 'ready_change' => 1,
                 'no_rank_mapping' => 2,
-                'no_match' => 3,
-                'ready_no_change' => 4,
+                'ambiguous_match' => 3,
+                'no_match' => 4,
+                'ready_no_change' => 5,
             ];
             $ap = $priority[$a['status_key']] ?? 99;
             $bp = $priority[$b['status_key']] ?? 99;
@@ -364,6 +363,7 @@ require_once __DIR__ . '/../../app/views/header.php';
         <div class="stat"><div class="muted">Users evaluated</div><div class="value"><?= h((string)$summary['all']) ?></div></div>
         <div class="stat"><div class="muted">Changes ready</div><div class="value"><?= h((string)$summary['ready_change']) ?></div></div>
         <div class="stat"><div class="muted">Blocked by hierarchy</div><div class="value"><?= h((string)$summary['blocked_hierarchy']) ?></div></div>
+        <div class="stat"><div class="muted">Ambiguous match</div><div class="value"><?= h((string)$summary['ambiguous_match']) ?></div></div>
         <div class="stat"><div class="muted">No RS match</div><div class="value"><?= h((string)$summary['no_match']) ?></div></div>
         <div class="stat"><div class="muted">No rank mapping</div><div class="value"><?= h((string)$summary['no_rank_mapping']) ?></div></div>
     </div>
@@ -381,6 +381,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                     <option value="ready_change" <?= $statusFilter === 'ready_change' ? 'selected' : '' ?>>Ready: Change</option>
                     <option value="ready_no_change" <?= $statusFilter === 'ready_no_change' ? 'selected' : '' ?>>Ready: No Change</option>
                     <option value="blocked_hierarchy" <?= $statusFilter === 'blocked_hierarchy' ? 'selected' : '' ?>>Blocked: Hierarchy</option>
+                    <option value="ambiguous_match" <?= $statusFilter === 'ambiguous_match' ? 'selected' : '' ?>>Ambiguous Match</option>
                     <option value="no_match" <?= $statusFilter === 'no_match' ? 'selected' : '' ?>>No Match</option>
                     <option value="no_rank_mapping" <?= $statusFilter === 'no_rank_mapping' ? 'selected' : '' ?>>No Rank Mapping</option>
                 </select>
@@ -435,7 +436,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                             <div class="stack">
                                 <strong><?= h((string)$row['resolved_member']['rsn']) ?></strong>
                                 <div class="small muted">Rank: <?= h($row['rank_name'] !== '' ? $row['rank_name'] : 'Unknown') ?></div>
-                                <div><span class="code-badge"><?= h($row['resolved_by'] === 'manual' ? 'Manual mapping' : 'Nickname fallback') ?></span></div>
+                                <div><span class="code-badge"><?php if ($row['resolved_by'] === 'manual'): ?>Manual mapping<?php elseif ($row['resolved_by'] === 'nickname_exact'): ?>Nickname exact<?php elseif ($row['resolved_by'] === 'nickname_contains'): ?>Nickname contains RSN<?php else: ?>Nickname fallback<?php endif; ?></span></div>
                             </div>
                         <?php else: ?>
                             <span class="muted">No match</span>
