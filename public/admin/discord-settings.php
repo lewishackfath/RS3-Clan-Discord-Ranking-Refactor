@@ -7,23 +7,66 @@ $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
 $allowedIntervals = [5, 10, 15, 30, 60];
+$requiredColumns = [
+    'log_channel_id',
+    'log_channel_name_cache',
+    'send_guest_dm',
+    'guest_dm_message',
+    'auto_sync_enabled',
+    'auto_sync_interval_minutes',
+    'last_auto_sync_at',
+    'last_roster_import_at',
+    'last_roster_import_status',
+    'last_roster_import_message',
+    'last_auto_sync_status',
+    'last_auto_sync_message',
+];
 
 $missingTables = require_tables($pdo, ['guild_settings']);
 $missingColumns = [];
 if (!$missingTables) {
-    $missingColumns = require_columns($pdo, 'guild_settings', [
-        'log_channel_id',
-        'log_channel_name_cache',
-        'send_guest_dm',
-        'guest_dm_message',
-        'auto_sync_enabled',
-        'auto_sync_interval_minutes',
-        'last_auto_sync_at',
-    ]);
+    $missingColumns = require_columns($pdo, 'guild_settings', $requiredColumns);
 }
 
 if (!$missingTables && !$missingColumns && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
+
+    $action = (string)($_POST['action'] ?? 'save_settings');
+
+    if ($action === 'run_auto_sync_now') {
+        $lockHandle = sync_acquire_process_lock(__DIR__ . '/../../storage/locks/auto-sync.lock');
+        if ($lockHandle === false) {
+            flash('error', 'Automatic sync is already running. Please wait for the current run to finish.');
+            redirect('/admin/discord-settings.php');
+        }
+
+        try {
+            $admin = current_admin();
+            $result = perform_auto_sync_for_clan($pdo, $clanId, $guildId, [
+                'trigger_source' => 'auto',
+                'initiated_by_discord_user_id' => $admin['id'] ?? null,
+                'initiated_by_name' => ($admin['username'] ?? 'Admin') . ' (Run Auto Sync Now)',
+            ]);
+
+            $import = $result['import'] ?? [];
+            $message = sprintf(
+                'Auto sync completed. Roster import fetched %d members, inserted %d, updated %d, reactivated %d, marked inactive %d. %s',
+                (int)($import['fetched'] ?? 0),
+                (int)($import['inserted'] ?? 0),
+                (int)($import['updated'] ?? 0),
+                (int)($import['reactivated'] ?? 0),
+                (int)($import['marked_inactive'] ?? 0),
+                (string)($result['summary'] ?? '')
+            );
+            flash('success', trim($message));
+        } catch (Throwable $e) {
+            flash('error', 'Automatic sync failed: ' . $e->getMessage());
+        } finally {
+            sync_release_process_lock($lockHandle);
+        }
+
+        redirect('/admin/discord-settings.php');
+    }
 
     try {
         $guild = discord_get_guild($guildId);
@@ -116,11 +159,19 @@ $settings = [
     'auto_sync_enabled' => 0,
     'auto_sync_interval_minutes' => 15,
     'last_auto_sync_at' => null,
+    'last_roster_import_at' => null,
+    'last_roster_import_status' => null,
+    'last_roster_import_message' => null,
+    'last_auto_sync_status' => null,
+    'last_auto_sync_message' => null,
 ];
 $channels = [];
 $guild = null;
 $lastAutoSyncUtc = null;
 $nextEligibleUtc = null;
+$lastRosterImportUtc = null;
+$latestAutoRun = null;
+$latestAnyRun = null;
 
 if (!$missingTables && !$missingColumns) {
     try {
@@ -139,6 +190,23 @@ if (!$missingTables && !$missingColumns) {
             $lastAutoSyncUtc = new DateTimeImmutable($lastAutoSyncRaw, new DateTimeZone('UTC'));
             $intervalMinutes = max(1, (int)($settings['auto_sync_interval_minutes'] ?? 15));
             $nextEligibleUtc = $lastAutoSyncUtc->modify('+' . $intervalMinutes . ' minutes');
+        }
+
+        $lastRosterImportRaw = trim((string)($settings['last_roster_import_at'] ?? ''));
+        if ($lastRosterImportRaw !== '') {
+            $lastRosterImportUtc = new DateTimeImmutable($lastRosterImportRaw, new DateTimeZone('UTC'));
+        }
+
+        if (table_exists($pdo, 'sync_runs')) {
+            if (column_exists($pdo, 'sync_runs', 'trigger_source')) {
+                $autoStmt = $pdo->prepare('SELECT * FROM sync_runs WHERE clan_id = :clan_id AND trigger_source = "auto" ORDER BY started_at_utc DESC, id DESC LIMIT 1');
+                $autoStmt->execute(['clan_id' => $clanId]);
+                $latestAutoRun = $autoStmt->fetch() ?: null;
+            }
+
+            $latestStmt = $pdo->prepare('SELECT * FROM sync_runs WHERE clan_id = :clan_id ORDER BY started_at_utc DESC, id DESC LIMIT 1');
+            $latestStmt->execute(['clan_id' => $clanId]);
+            $latestAnyRun = $latestStmt->fetch() ?: null;
         }
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
@@ -168,11 +236,110 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <li><code><?= h($column) ?></code></li>
             <?php endforeach; ?>
         </ul>
-        <p class="muted small">Run <code>sql/migrations/phase3.2-auto-sync-scheduler.sql</code> if you are upgrading from the previous working version.</p>
+        <p class="muted small">Run <code>sql/migrations/phase3.2.2-auto-sync-status-visibility.sql</code> after <code>phase3.2-auto-sync-scheduler.sql</code>.</p>
     </div>
 <?php else: ?>
+<div class="grid two">
+    <div class="card">
+        <h3>Current Auto Sync Status</h3>
+        <table>
+            <tbody>
+                <tr>
+                    <th>Auto Sync</th>
+                    <td><span class="status <?= !empty($settings['auto_sync_enabled']) ? 'ok' : 'warn' ?>"><?= !empty($settings['auto_sync_enabled']) ? 'Enabled' : 'Disabled' ?></span></td>
+                </tr>
+                <tr>
+                    <th>Last Roster Import</th>
+                    <td>
+                        <?= $lastRosterImportUtc ? h($lastRosterImportUtc->format('Y-m-d H:i:s')) . ' UTC' : '<span class="muted">Never</span>' ?>
+                        <?php if (!empty($settings['last_roster_import_status'])): ?>
+                            <div style="margin-top:6px"><span class="status <?= (string)$settings['last_roster_import_status'] === 'ok' ? 'ok' : 'bad' ?>"><?= h((string)$settings['last_roster_import_status']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($settings['last_roster_import_message'])): ?>
+                            <div class="hint" style="margin-top:8px"><?= h((string)$settings['last_roster_import_message']) ?></div>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Last Auto Sync</th>
+                    <td>
+                        <?= $lastAutoSyncUtc ? h($lastAutoSyncUtc->format('Y-m-d H:i:s')) . ' UTC' : '<span class="muted">Never</span>' ?>
+                        <?php if (!empty($settings['last_auto_sync_status'])): ?>
+                            <div style="margin-top:6px"><span class="status <?= (string)$settings['last_auto_sync_status'] === 'ok' ? 'ok' : ((string)$settings['last_auto_sync_status'] === 'running' ? 'warn' : 'bad') ?>"><?= h((string)$settings['last_auto_sync_status']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($settings['last_auto_sync_message'])): ?>
+                            <div class="hint" style="margin-top:8px"><?= h((string)$settings['last_auto_sync_message']) ?></div>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Next Eligible Auto Sync</th>
+                    <td>
+                        <?php if (empty($settings['auto_sync_enabled'])): ?>
+                            <span class="muted">Automatic sync is disabled</span>
+                        <?php elseif ($nextEligibleUtc instanceof DateTimeImmutable): ?>
+                            <?= h($nextEligibleUtc->format('Y-m-d H:i:s')) ?> UTC
+                        <?php else: ?>
+                            <span class="muted">Immediately when the cron runner next checks</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="table-actions">
+            <div class="hint">Use the same cron-safe pipeline on demand without waiting for the next schedule.</div>
+            <form method="post" style="margin:0;">
+                <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+                <input type="hidden" name="action" value="run_auto_sync_now">
+                <button class="btn-secondary" type="submit">Run Auto Sync Now</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Recent Scheduler Results</h3>
+        <table>
+            <tbody>
+                <tr>
+                    <th>Latest Auto Run</th>
+                    <td>
+                        <?php if ($latestAutoRun): ?>
+                            <div>#<?= h((string)$latestAutoRun['id']) ?> • <?= h((string)($latestAutoRun['started_at_utc'] ?? '')) ?> UTC</div>
+                            <div style="margin-top:6px"><span class="status <?= ((string)($latestAutoRun['status'] ?? '') === 'completed') ? 'ok' : (((string)($latestAutoRun['status'] ?? '') === 'completed_with_errors') ? 'warn' : 'bad') ?>"><?= h((string)($latestAutoRun['status'] ?? 'unknown')) ?></span></div>
+                        <?php else: ?>
+                            <span class="muted">No automatic runs recorded yet</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Latest Any Run</th>
+                    <td>
+                        <?php if ($latestAnyRun): ?>
+                            <div>#<?= h((string)$latestAnyRun['id']) ?> • <?= h((string)($latestAnyRun['started_at_utc'] ?? '')) ?> UTC</div>
+                            <div class="hint" style="margin-top:8px">
+                                <?= h(ucfirst((string)($latestAnyRun['trigger_source'] ?? 'manual'))) ?> trigger • changed <?= h((string)($latestAnyRun['changed_members'] ?? 0)) ?> of <?= h((string)($latestAnyRun['total_members'] ?? 0)) ?> members
+                            </div>
+                        <?php else: ?>
+                            <span class="muted">No sync runs recorded yet</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Cron Entry</th>
+                    <td><code>*/5 * * * * php /path/to/project/cron/cron_auto_sync.php</code></td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="table-actions">
+            <div class="hint">Full per-member outcomes remain available in Sync History.</div>
+            <a class="btn-secondary" href="/admin/sync-history.php?source=auto">View Auto Sync History</a>
+        </div>
+    </div>
+</div>
+
 <form method="post" class="card">
     <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+    <input type="hidden" name="action" value="save_settings">
 
     <div class="grid two">
         <div class="card" style="margin-bottom:0">
@@ -229,14 +396,15 @@ require_once __DIR__ . '/../../app/views/header.php';
 
     <div class="card" style="margin-top:18px; margin-bottom:0;">
         <h3 style="margin-top:0;">Automatic Sync Scheduler</h3>
-        <p class="muted">The cron runner uses the same live sync engine as <strong>Run Sync Now</strong>. It will only run clans that are enabled and due.</p>
-        <div class="grid two">
+        <p class="muted">The cron runner uses the same live sync engine as <strong>Run Sync Now</strong>, and now shows the last roster import result plus the last scheduler outcome directly on this page.</p>
+
+        <div class="grid two" style="margin-top:14px;">
             <div>
                 <label class="inline">
                     <input type="checkbox" name="auto_sync_enabled" value="1" <?= !empty($settings['auto_sync_enabled']) ? 'checked' : '' ?>>
                     <span><strong>Enable Automatic Sync</strong></span>
                 </label>
-                <p class="hint">Leave disabled if you only want staff to run syncs manually.</p>
+                <p class="hint">When enabled, the cron runner will check this clan and run when the interval has elapsed.</p>
             </div>
             <div>
                 <label for="auto_sync_interval_minutes"><strong>Sync Frequency</strong></label>
@@ -248,32 +416,6 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <p class="hint">This controls the earliest next run time once the cron job is in place.</p>
             </div>
         </div>
-
-        <table style="margin-top:18px;">
-            <tbody>
-                <tr>
-                    <th>Auto Sync Status</th>
-                    <td><span class="status <?= !empty($settings['auto_sync_enabled']) ? 'ok' : 'warn' ?>"><?= !empty($settings['auto_sync_enabled']) ? 'Enabled' : 'Disabled' ?></span></td>
-                </tr>
-                <tr>
-                    <th>Last Auto Sync Run</th>
-                    <td><?= $lastAutoSyncUtc ? h($lastAutoSyncUtc->format('Y-m-d H:i:s')) . ' UTC' : '<span class="muted">Never</span>' ?></td>
-                </tr>
-                <tr>
-                    <th>Next Eligible Auto Sync</th>
-                    <td>
-                        <?php if (empty($settings['auto_sync_enabled'])): ?>
-                            <span class="muted">Automatic sync is disabled</span>
-                        <?php elseif ($nextEligibleUtc instanceof DateTimeImmutable): ?>
-                            <?= h($nextEligibleUtc->format('Y-m-d H:i:s')) ?> UTC
-                        <?php else: ?>
-                            <span class="muted">Immediately when the cron runner next checks</span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-        <p class="hint" style="margin-top:12px;">Cron entry example: <code>*/5 * * * * php /path/to/project/cron/cron_auto_sync.php</code></p>
     </div>
 
     <div class="table-actions">

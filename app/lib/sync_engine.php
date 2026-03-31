@@ -486,6 +486,104 @@ function execute_sync_run(PDO $pdo, string $guildId, int $clanId, array $options
     }
 }
 
+
+function auto_sync_update_guild_status(PDO $pdo, int $clanId, array $fields): void
+{
+    if ($clanId <= 0 || $fields === []) {
+        return;
+    }
+
+    $assignments = [];
+    $params = ['clan_id' => $clanId];
+    foreach ($fields as $column => $value) {
+        $assignments[] = $column . ' = :' . $column;
+        $params[$column] = $value;
+    }
+    $assignments[] = 'updated_at = CURRENT_TIMESTAMP';
+
+    $sql = 'UPDATE guild_settings SET ' . implode(', ', $assignments) . ' WHERE clan_id = :clan_id';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+}
+
+function perform_auto_sync_for_clan(PDO $pdo, int $clanId, string $guildId, array $options = []): array
+{
+    if ($clanId <= 0) {
+        throw new RuntimeException('A valid clan ID is required for automatic sync.');
+    }
+    $guildId = trim($guildId);
+    if ($guildId === '') {
+        throw new RuntimeException('A valid Discord guild ID is required for automatic sync.');
+    }
+
+    $clanName = trim((string)($options['clan_name'] ?? env('CLAN_NAME', '')));
+    if ($clanName === '') {
+        auto_sync_update_guild_status($pdo, $clanId, [
+            'last_roster_import_at' => now_utc(),
+            'last_roster_import_status' => 'error',
+            'last_roster_import_message' => 'CLAN_NAME is missing from .env, so the latest RuneScape roster could not be imported.',
+            'last_auto_sync_status' => 'error',
+            'last_auto_sync_message' => 'Automatic sync skipped because CLAN_NAME is missing from .env.',
+        ]);
+        throw new RuntimeException('CLAN_NAME is missing from .env.');
+    }
+
+    try {
+        $import = import_runescape_clan_members($pdo, $clanId, $clanName);
+        $importMessage = sprintf(
+            'Imported %d members from RuneScape for %s. Inserted %d, updated %d, reactivated %d, marked inactive %d.',
+            (int)($import['fetched'] ?? 0),
+            (string)($import['clan_name'] ?? $clanName),
+            (int)($import['inserted'] ?? 0),
+            (int)($import['updated'] ?? 0),
+            (int)($import['reactivated'] ?? 0),
+            (int)($import['marked_inactive'] ?? 0)
+        );
+
+        auto_sync_update_guild_status($pdo, $clanId, [
+            'last_roster_import_at' => now_utc(),
+            'last_roster_import_status' => 'ok',
+            'last_roster_import_message' => $importMessage,
+            'last_auto_sync_status' => 'running',
+            'last_auto_sync_message' => 'Roster import succeeded. Live sync is now running.',
+        ]);
+    } catch (Throwable $e) {
+        auto_sync_update_guild_status($pdo, $clanId, [
+            'last_roster_import_at' => now_utc(),
+            'last_roster_import_status' => 'error',
+            'last_roster_import_message' => $e->getMessage(),
+            'last_auto_sync_status' => 'error',
+            'last_auto_sync_message' => 'Automatic sync skipped because the latest RuneScape roster import failed.',
+        ]);
+        throw $e;
+    }
+
+    try {
+        $summary = execute_sync_run($pdo, $guildId, $clanId, [
+            'trigger_source' => (string)($options['trigger_source'] ?? 'auto'),
+            'initiated_by_discord_user_id' => $options['initiated_by_discord_user_id'] ?? null,
+            'initiated_by_name' => $options['initiated_by_name'] ?? 'Automatic Scheduler',
+        ]);
+
+        auto_sync_update_guild_status($pdo, $clanId, [
+            'last_auto_sync_at' => now_utc(),
+            'last_auto_sync_status' => 'ok',
+            'last_auto_sync_message' => $summary,
+        ]);
+
+        return [
+            'import' => $import,
+            'summary' => $summary,
+        ];
+    } catch (Throwable $e) {
+        auto_sync_update_guild_status($pdo, $clanId, [
+            'last_auto_sync_status' => 'error',
+            'last_auto_sync_message' => $e->getMessage(),
+        ]);
+        throw $e;
+    }
+}
+
 function sync_acquire_process_lock(string $lockFile)
 {
     $directory = dirname($lockFile);

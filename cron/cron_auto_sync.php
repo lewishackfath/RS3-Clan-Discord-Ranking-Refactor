@@ -17,7 +17,7 @@ if ($missingTables) {
     exit(1);
 }
 
-$missingColumns = require_columns($pdo, 'guild_settings', ['auto_sync_enabled', 'auto_sync_interval_minutes', 'last_auto_sync_at']);
+$missingColumns = require_columns($pdo, 'guild_settings', ['auto_sync_enabled', 'auto_sync_interval_minutes', 'last_auto_sync_at', 'last_roster_import_at', 'last_roster_import_status', 'last_roster_import_message', 'last_auto_sync_status', 'last_auto_sync_message']);
 if ($missingColumns) {
     fwrite(STDERR, "Missing required guild_settings columns: " . implode(', ', $missingColumns) . PHP_EOL);
     fwrite(STDERR, "Run sql/migrations/phase3.2-auto-sync-scheduler.sql first." . PHP_EOL);
@@ -28,13 +28,6 @@ $lockHandle = sync_acquire_process_lock(__DIR__ . '/../storage/locks/auto-sync.l
 if ($lockHandle === false) {
     fwrite(STDOUT, "Automatic sync is already running; exiting." . PHP_EOL);
     exit(0);
-}
-
-$clanName = trim((string)env('CLAN_NAME', ''));
-if ($clanName === '') {
-    fwrite(STDERR, "CLAN_NAME is missing from .env. Automatic sync cannot refresh the latest RuneScape clan roster without it." . PHP_EOL);
-    sync_release_process_lock($lockHandle);
-    exit(1);
 }
 
 try {
@@ -67,27 +60,23 @@ try {
         fwrite(STDOUT, sprintf('[%s] Running auto sync for clan %d (%s)%s', gmdate('Y-m-d H:i:s'), $clanId, $guildId, PHP_EOL));
 
         try {
-            $importSummary = import_runescape_clan_members($pdo, $clanId, $clanName);
-            fwrite(STDOUT, sprintf(
-                'Imported latest RuneScape roster for %s: fetched=%d inserted=%d updated=%d reactivated=%d inactive_after=%d%s',
-                (string)$importSummary['clan_name'],
-                (int)$importSummary['fetched'],
-                (int)$importSummary['inserted'],
-                (int)$importSummary['updated'],
-                (int)$importSummary['reactivated'],
-                (int)$importSummary['marked_inactive'],
-                PHP_EOL
-            ));
-
-            $summary = execute_sync_run($pdo, $guildId, $clanId, [
+            $result = perform_auto_sync_for_clan($pdo, $clanId, $guildId, [
                 'trigger_source' => 'auto',
                 'initiated_by_discord_user_id' => null,
                 'initiated_by_name' => 'Automatic Scheduler',
             ]);
-            fwrite(STDOUT, $summary . PHP_EOL);
 
-            $touchStmt = $pdo->prepare('UPDATE guild_settings SET last_auto_sync_at = UTC_TIMESTAMP(), updated_at = CURRENT_TIMESTAMP WHERE clan_id = :clan_id');
-            $touchStmt->execute(['clan_id' => $clanId]);
+            $import = $result['import'] ?? [];
+            fwrite(STDOUT, sprintf(
+                'Roster import: fetched=%d inserted=%d updated=%d reactivated=%d inactive=%d%s',
+                (int)($import['fetched'] ?? 0),
+                (int)($import['inserted'] ?? 0),
+                (int)($import['updated'] ?? 0),
+                (int)($import['reactivated'] ?? 0),
+                (int)($import['marked_inactive'] ?? 0),
+                PHP_EOL
+            ));
+            fwrite(STDOUT, (string)($result['summary'] ?? 'Automatic sync completed.') . PHP_EOL);
         } catch (Throwable $e) {
             fwrite(STDERR, 'Auto sync failed for clan ' . $clanId . ': ' . $e->getMessage() . PHP_EOL);
         }

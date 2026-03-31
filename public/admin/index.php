@@ -16,6 +16,11 @@ $settingsMissingColumns = !$missingTables ? require_columns($pdo, 'guild_setting
     'auto_sync_enabled',
     'auto_sync_interval_minutes',
     'last_auto_sync_at',
+    'last_roster_import_at',
+    'last_roster_import_status',
+    'last_roster_import_message',
+    'last_auto_sync_status',
+    'last_auto_sync_message',
 ]) : [];
 
 $status = null;
@@ -24,6 +29,7 @@ $mappedRoleIds = [];
 $botRoleIds = [];
 $discordSettings = null;
 $latestSyncRun = null;
+$latestAutoRun = null;
 $hasTriggerSource = table_exists($pdo, 'sync_runs') && column_exists($pdo, 'sync_runs', 'trigger_source');
 
 if (!$missingTables) {
@@ -45,6 +51,12 @@ if (!$missingTables) {
         $latestRunStmt = $pdo->prepare('SELECT * FROM sync_runs WHERE clan_id = :clan_id ORDER BY started_at_utc DESC, id DESC LIMIT 1');
         $latestRunStmt->execute(['clan_id' => $clanId]);
         $latestSyncRun = $latestRunStmt->fetch() ?: null;
+
+        if ($hasTriggerSource) {
+            $latestAutoStmt = $pdo->prepare('SELECT * FROM sync_runs WHERE clan_id = :clan_id AND trigger_source = "auto" ORDER BY started_at_utc DESC, id DESC LIMIT 1');
+            $latestAutoStmt->execute(['clan_id' => $clanId]);
+            $latestAutoRun = $latestAutoStmt->fetch() ?: null;
+        }
     }
 
     try {
@@ -85,6 +97,49 @@ require_once __DIR__ . '/../../app/views/header.php';
 </div>
 
 <?php if (!$missingTables && !$settingsMissingColumns): ?>
+<div class="stat-grid">
+    <div class="stat">
+        <div class="muted small">Auto Sync</div>
+        <div class="value"><?= !empty($discordSettings['auto_sync_enabled']) ? 'On' : 'Off' ?></div>
+        <div class="hint" style="margin-top:8px;">Every <?= h((string)($discordSettings['auto_sync_interval_minutes'] ?? 15)) ?> minutes</div>
+    </div>
+    <div class="stat">
+        <div class="muted small">Last Roster Import</div>
+        <div class="value" style="font-size:18px;"><?= !empty($discordSettings['last_roster_import_at']) ? h((string)$discordSettings['last_roster_import_at']) : 'Never' ?></div>
+        <div class="hint" style="margin-top:8px;">
+            <?php if (!empty($discordSettings['last_roster_import_status'])): ?>
+                <span class="status <?= (string)$discordSettings['last_roster_import_status'] === 'ok' ? 'ok' : 'bad' ?>"><?= h((string)$discordSettings['last_roster_import_status']) ?></span>
+            <?php else: ?>
+                No roster import status recorded yet
+            <?php endif; ?>
+        </div>
+    </div>
+    <div class="stat">
+        <div class="muted small">Last Auto Sync</div>
+        <div class="value" style="font-size:18px;"><?= !empty($discordSettings['last_auto_sync_at']) ? h((string)$discordSettings['last_auto_sync_at']) : 'Never' ?></div>
+        <div class="hint" style="margin-top:8px;">
+            <?php if (!empty($discordSettings['last_auto_sync_status'])): ?>
+                <span class="status <?= (string)$discordSettings['last_auto_sync_status'] === 'ok' ? 'ok' : ((string)$discordSettings['last_auto_sync_status'] === 'running' ? 'warn' : 'bad') ?>"><?= h((string)$discordSettings['last_auto_sync_status']) ?></span>
+            <?php else: ?>
+                No automatic sync status recorded yet
+            <?php endif; ?>
+        </div>
+    </div>
+    <div class="stat">
+        <div class="muted small">Next Eligible Run</div>
+        <div class="value" style="font-size:18px;">
+            <?php if (empty($discordSettings['auto_sync_enabled'])): ?>
+                Disabled
+            <?php elseif ($nextEligibleAutoSync instanceof DateTimeImmutable): ?>
+                <?= h($nextEligibleAutoSync->format('Y-m-d H:i:s')) ?>
+            <?php else: ?>
+                Ready Now
+            <?php endif; ?>
+        </div>
+        <div class="hint" style="margin-top:8px;">UTC</div>
+    </div>
+</div>
+
 <div class="grid two">
     <div class="card">
         <h3>Discord Settings</h3>
@@ -93,6 +148,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             <tr><th>Guest DM</th><td><span class="status <?= !empty($discordSettings['send_guest_dm']) ? 'ok' : 'warn' ?>"><?= !empty($discordSettings['send_guest_dm']) ? 'Enabled' : 'Disabled' ?></span></td></tr>
             <tr><th>Auto Sync</th><td><span class="status <?= !empty($discordSettings['auto_sync_enabled']) ? 'ok' : 'warn' ?>"><?= !empty($discordSettings['auto_sync_enabled']) ? 'Enabled' : 'Disabled' ?></span></td></tr>
             <tr><th>Frequency</th><td><?= h((string)($discordSettings['auto_sync_interval_minutes'] ?? 15)) ?> minutes</td></tr>
+            <tr><th>Last Roster Import</th><td><?= !empty($discordSettings['last_roster_import_at']) ? h((string)$discordSettings['last_roster_import_at']) . ' UTC' : '<span class="muted">Never</span>' ?></td></tr>
             <tr><th>Last Auto Sync</th><td><?= !empty($discordSettings['last_auto_sync_at']) ? h((string)$discordSettings['last_auto_sync_at']) . ' UTC' : '<span class="muted">Never</span>' ?></td></tr>
             <tr><th>Next Eligible</th><td>
                 <?php if (empty($discordSettings['auto_sync_enabled'])): ?>
@@ -105,7 +161,7 @@ require_once __DIR__ . '/../../app/views/header.php';
             </td></tr>
         </table>
         <div class="table-actions">
-            <div class="hint">Configure logging, Guest DM behaviour, and automatic sync scheduling.</div>
+            <div class="hint">Configure logging, Guest DM behaviour, status visibility, and automatic sync scheduling.</div>
             <a class="btn-secondary" href="/admin/discord-settings.php">Open Discord Settings</a>
         </div>
     </div>
@@ -119,6 +175,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                 <tr><th>Status</th><td><span class="status <?= ((string)$latestSyncRun['status'] === 'completed') ? 'ok' : (((string)$latestSyncRun['status'] === 'completed_with_errors') ? 'warn' : 'bad') ?>"><?= h((string)$latestSyncRun['status']) ?></span></td></tr>
                 <tr><th>Started</th><td><?= h((string)$latestSyncRun['started_at_utc']) ?> UTC</td></tr>
                 <tr><th>Changed</th><td><?= h((string)($latestSyncRun['changed_members'] ?? 0)) ?> / <?= h((string)($latestSyncRun['total_members'] ?? 0)) ?></td></tr>
+                <?php if ($latestAutoRun): ?><tr><th>Latest Auto Run</th><td>#<?= h((string)$latestAutoRun['id']) ?> • <?= h((string)($latestAutoRun['started_at_utc'] ?? '')) ?> UTC</td></tr><?php endif; ?>
             </table>
         <?php else: ?>
             <p class="muted">No sync runs have been logged yet.</p>
@@ -144,8 +201,8 @@ require_once __DIR__ . '/../../app/views/header.php';
 <?php elseif ($settingsMissingColumns): ?>
     <div class="card">
         <span class="status bad">Migration Required</span>
-        <p>The <code>guild_settings</code> table is missing the new automatic sync columns.</p>
-        <p class="muted small">Run <code>sql/migrations/phase3.2-auto-sync-scheduler.sql</code> before using P3.2 features.</p>
+        <p>The <code>guild_settings</code> table is missing the status visibility columns required for P3.2.2.</p>
+        <p class="muted small">Run <code>sql/migrations/phase3.2.2-auto-sync-status-visibility.sql</code> after the P3.2 scheduler migration.</p>
     </div>
 <?php elseif ($errorMessage): ?>
     <div class="card">
