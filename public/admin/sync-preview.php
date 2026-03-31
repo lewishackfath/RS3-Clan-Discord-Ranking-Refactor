@@ -74,6 +74,83 @@ function preview_member_roles(array $roleIds, array $roleMap, array $roleFlags):
 }
 
 
+
+function build_role_name_list(array $roleIds, array $roleMap): string
+{
+    $names = [];
+    foreach ($roleIds as $roleId) {
+        $role = $roleMap[(string)$roleId] ?? null;
+        if (!$role) {
+            continue;
+        }
+        $name = trim((string)($role['name'] ?? ''));
+        if ($name === '' || $name === '@everyone') {
+            continue;
+        }
+        $names[] = $name;
+    }
+    return $names ? implode(', ', $names) : 'None';
+}
+
+function maybe_log_member_change_embed(array $guildSettings, array $summaryMember, ?array $resolvedMember, string $rankName, array $addRoleIds, array $removeRoleIds, array $currentRoleIds, array $roleMap): void
+{
+    $logChannelId = trim((string)($guildSettings['log_channel_id'] ?? ''));
+    if ($logChannelId === '') {
+        return;
+    }
+
+    if ($addRoleIds === [] && $removeRoleIds === []) {
+        return;
+    }
+
+    $displayName = (string)($summaryMember['nickname'] !== '' ? $summaryMember['nickname'] : $summaryMember['display_name']);
+    $rsn = (string)($resolvedMember['rsn'] ?? '');
+    $resolvedRank = $rankName !== '' ? $rankName : 'Guest';
+
+    $embed = [
+        'title' => 'Clan Roles Updated (' . ($displayName !== '' ? $displayName : (string)$summaryMember['username']) . ')',
+        'color' => 5793266,
+        'fields' => [
+            [
+                'name' => 'Current Rank',
+                'value' => $resolvedRank,
+                'inline' => true,
+            ],
+            [
+                'name' => 'RuneScape Name',
+                'value' => $rsn !== '' ? $rsn : 'Unmatched',
+                'inline' => true,
+            ],
+            [
+                'name' => 'Discord User',
+                'value' => '<@' . (string)$summaryMember['user_id'] . '>',
+                'inline' => true,
+            ],
+            [
+                'name' => 'Roles Added',
+                'value' => build_role_name_list($addRoleIds, $roleMap),
+                'inline' => false,
+            ],
+            [
+                'name' => 'Roles Removed',
+                'value' => build_role_name_list($removeRoleIds, $roleMap),
+                'inline' => false,
+            ],
+            [
+                'name' => 'Current Roles',
+                'value' => build_role_name_list($currentRoleIds, $roleMap),
+                'inline' => false,
+            ],
+        ],
+        'footer' => [
+            'text' => 'RS3 Clan Ranker',
+        ],
+        'timestamp' => gmdate('c'),
+    ];
+
+    discord_send_channel_embed($logChannelId, $embed);
+}
+
 function render_guest_dm_template(string $template, array $context): string
 {
     $replace = [];
@@ -333,6 +410,10 @@ function execute_manual_sync(PDO $pdo, string $guildId, int $clanId): string
                     discord_modify_member_roles($guildId, $userId, $newRoleIds);
                     $memberStatus = 'changed';
                     $counts['changed']++;
+                    try {
+                        maybe_log_member_change_embed($guildSettings, $summaryMember, $resolvedMember, $rankName, $addRoleIds, $removeRoleIds, $newRoleIds, $roleMap);
+                    } catch (Throwable $ignored) {
+                    }
                 } else {
                     $memberStatus = 'no_change';
                     $counts['skipped']++;
@@ -420,7 +501,7 @@ function execute_manual_sync(PDO $pdo, string $guildId, int $clanId): string
     $logChannelId = trim((string)($guildSettings['log_channel_id'] ?? ''));
     if ($logChannelId !== '') {
         try {
-            discord_send_channel_message($logChannelId, $summaryText);
+            discord_send_channel_message($logChannelId, 'Sync summary: ' . $summaryText);
         } catch (Throwable $ignored) {
         }
     }

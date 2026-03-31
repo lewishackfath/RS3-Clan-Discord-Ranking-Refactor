@@ -389,3 +389,15 @@ function discord_send_dm(string $userId, string $content): void
     }
     discord_send_channel_message($channelId, $content);
 }
+
+
+function discord_send_channel_embed(string $channelId, array $embed): void
+{
+    $response = discord_request('POST', '/channels/' . rawurlencode($channelId) . '/messages', [
+        'embeds' => [$embed],
+    ], discord_bot_headers());
+
+    if ($response['status'] < 200 || $response['status'] >= 300) {
+        throw new RuntimeException('Failed to send Discord embed to channel ' . $channelId . '.');
+    }
+}
