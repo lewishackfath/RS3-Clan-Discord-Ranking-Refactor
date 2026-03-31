@@ -774,8 +774,17 @@ if (!$missingTables) {
 require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
-    <h2>Sync Preview</h2>
-    <p class="muted">This is a dry run only. No Discord roles are changed from this page. It resolves each Discord user to a RuneScape member using manual mappings first and nickname fallback second, then shows the role changes that would be made.</p>
+    <div class="table-actions" style="margin-top:0; margin-bottom:0;">
+        <div>
+            <h2 style="margin:0 0 8px 0;">Sync Preview</h2>
+            <p class="muted" style="margin:0;">Preview the role changes before applying them. Use <strong>Run Sync Now</strong> to execute the current logic against Discord.</p>
+        </div>
+        <form method="post" onsubmit="return confirm('Run live sync now? This will apply Discord role changes.');">
+            <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+            <input type="hidden" name="action" value="run_sync_now">
+            <button type="submit" class="btn-primary">Run Sync Now</button>
+        </form>
+    </div>
 </div>
 
 <?php if ($missingTables): ?>
