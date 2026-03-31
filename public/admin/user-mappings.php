@@ -208,6 +208,13 @@ require_once __DIR__ . '/../../app/views/header.php';
 
 <form method="post" class="card">
     <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
+<datalist id="clan-member-options">
+    <?php foreach ($clanMembers as $member): ?>
+        <?php $optionLabel = (string)$member['rsn'] . (!empty($member['rank_name']) ? ' (' . (string)$member['rank_name'] . ')' : ''); ?>
+        <option value="<?= h($optionLabel) ?>"></option>
+    <?php endforeach; ?>
+</datalist>
+
     <div class="table-actions">
         <div class="hint">Showing <?= h((string)count($discordMembers)) ?> result<?= count($discordMembers) === 1 ? '' : 's' ?>. Blank selections are treated as runtime-only nickname fallback.</div>
         <button class="btn-primary" type="submit">Save User Mappings</button>
@@ -255,28 +262,30 @@ require_once __DIR__ . '/../../app/views/header.php';
                 </td>
                 <td>
                     <div class="member-picker">
+                        <?php
+                            $selectedLabel = '';
+                            if ($manual) {
+                                $selectedLabel = (string)$manual['rsn_cache'];
+                                if ($selectedMemberId !== '') {
+                                    foreach ($clanMembers as $memberOption) {
+                                        if ((string)$memberOption['id'] === $selectedMemberId) {
+                                            $selectedLabel = (string)$memberOption['rsn'] . (!empty($memberOption['rank_name']) ? ' (' . (string)$memberOption['rank_name'] . ')' : '');
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        ?>
                         <input
                             type="text"
-                            class="mapping-search"
-                            data-target="member-select-<?= h($userId) ?>"
-                            placeholder="Search RSN or rank within dropdown"
-                            value=""
+                            list="clan-member-options"
+                            class="member-combobox"
+                            data-hidden-target="member-hidden-<?= h($userId) ?>"
+                            placeholder="Search and select RSN or leave blank"
+                            value="<?= h($selectedLabel) ?>"
                             autocomplete="off"
                         >
-                        <select id="member-select-<?= h($userId) ?>" name="member_id[<?= h($userId) ?>]" class="member-select">
-                            <option value="">-- No manual mapping --</option>
-                            <?php foreach ($clanMembers as $member):
-                                $optionLabel = (string)$member['rsn'] . (!empty($member['rank_name']) ? ' (' . (string)$member['rank_name'] . ')' : '');
-                            ?>
-                                <option
-                                    value="<?= h((string)$member['id']) ?>"
-                                    data-search="<?= h(mb_strtolower($optionLabel . ' ' . (string)$member['rsn_normalised'], 'UTF-8')) ?>"
-                                    <?= $selectedMemberId === (string)$member['id'] ? 'selected' : '' ?>
-                                >
-                                    <?= h($optionLabel) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                        <input type="hidden" id="member-hidden-<?= h($userId) ?>" name="member_id[<?= h($userId) ?>]" value="<?= h($selectedMemberId) ?>">
                     </div>
                     <?php if ($manual): ?>
                         <div class="small muted" style="margin-top:6px">Saved override: <?= h((string)$manual['rsn_cache']) ?></div>
@@ -303,33 +312,57 @@ require_once __DIR__ . '/../../app/views/header.php';
     </div>
 </form>
 
+
 <script>
+const clanMemberLookup = Object.freeze({
+<?php
+$lookupLines = [];
+foreach ($clanMembers as $member) {
+    $optionLabel = (string)$member['rsn'] . (!empty($member['rank_name']) ? ' (' . (string)$member['rank_name'] . ')' : '');
+    $keys = array_unique(array_filter([
+        $optionLabel,
+        (string)$member['rsn'],
+        (string)$member['rsn_normalised'],
+    ]));
+    foreach ($keys as $key) {
+        $lookupLines[] = json_encode(mb_strtolower((string)$key, 'UTF-8')) . ': ' . json_encode((string)$member['id']);
+    }
+}
+echo implode(",
+", $lookupLines);
+?>
+});
+
 document.addEventListener('input', function (event) {
-    if (!event.target.classList.contains('mapping-search')) {
+    if (!event.target.classList.contains('member-combobox')) {
         return;
     }
 
     const input = event.target;
-    const selectId = input.getAttribute('data-target');
-    const select = document.getElementById(selectId);
-    if (!select) {
+    const hiddenTarget = input.getAttribute('data-hidden-target');
+    const hidden = hiddenTarget ? document.getElementById(hiddenTarget) : null;
+    if (!hidden) {
         return;
     }
 
-    const term = input.value.trim().toLowerCase();
-    for (const option of select.options) {
-        if (option.value === '') {
-            option.hidden = false;
-            continue;
-        }
-        const haystack = (option.dataset.search || option.text || '').toLowerCase();
-        option.hidden = term !== '' && !haystack.includes(term);
+    const key = input.value.trim().toLowerCase();
+    hidden.value = clanMemberLookup[key] || '';
+});
+
+document.addEventListener('change', function (event) {
+    if (!event.target.classList.contains('member-combobox')) {
+        return;
     }
 
-    const selected = select.options[select.selectedIndex];
-    if (selected && selected.hidden) {
-        select.value = '';
+    const input = event.target;
+    const hiddenTarget = input.getAttribute('data-hidden-target');
+    const hidden = hiddenTarget ? document.getElementById(hiddenTarget) : null;
+    if (!hidden) {
+        return;
     }
+
+    const key = input.value.trim().toLowerCase();
+    hidden.value = clanMemberLookup[key] || '';
 });
 </script>
 <?php endif; ?>
