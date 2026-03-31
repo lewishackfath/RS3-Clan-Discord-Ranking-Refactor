@@ -150,7 +150,7 @@ require_once __DIR__ . '/../../app/views/header.php';
 ?>
 <div class="card">
     <h2>RuneScape Rank to Discord Role Mapping</h2>
-    <p class="muted">Mapped clan ranks can now use a cleaner checkbox dropdown for multi-role selection. Guest and Clan Member stay single-select because they are always one-to-one.</p>
+    <p class="muted">Mapped clan ranks use inline searchable dropdowns. Standard clan ranks support multi-role checkbox selection, while Guest and Clan Member stay single-select.</p>
 </div>
 
 <?php if ($missingTables): ?>
@@ -170,8 +170,6 @@ require_once __DIR__ . '/../../app/views/header.php';
     <form method="post" class="card">
         <input type="hidden" name="csrf_token" value="<?= h(post_csrf_token()) ?>">
         <style>
-            .role-filter-toolbar { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin-bottom: 16px; }
-            .role-filter-toolbar .field { min-width: 280px; flex: 1 1 320px; }
             .role-picker { position: relative; min-width: 300px; }
             .role-picker-toggle {
                 width: 100%; text-align: left; background: #0b1220; color: var(--text);
@@ -181,22 +179,18 @@ require_once __DIR__ . '/../../app/views/header.php';
             .role-picker-menu {
                 display:none; position:absolute; top: calc(100% + 6px); left:0; right:0; z-index:30;
                 background: #0b1220; border:1px solid var(--line); border-radius: 12px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
-                max-height: 320px; overflow: auto;
+                max-height: 360px; overflow: auto;
             }
             .role-picker.open .role-picker-menu { display:block; }
+            .role-picker-search {
+                width: 100%; margin-bottom: 10px; background: #111827; color: var(--text);
+                border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+            }
             .role-picker-option { display:flex; gap:8px; align-items:flex-start; padding: 6px 4px; border-radius: 8px; }
             .role-picker-option:hover { background: rgba(255,255,255,.04); }
             .role-picker-option input { margin-top: 2px; }
             .role-picker-empty { padding: 8px 4px; color: var(--muted); }
-            .role-filter-note { margin-bottom: 14px; }
         </style>
-        <div class="role-filter-toolbar">
-            <div class="field">
-                <label for="role-filter-query" class="small muted">Role Search</label>
-                <input id="role-filter-query" type="text" placeholder="Filter available Discord roles for all mapping controls" data-global-role-filter>
-            </div>
-        </div>
-        <p class="small muted role-filter-note">Use the role search box above to narrow large role lists across both the checkbox dropdowns and the single-select role fields.</p>
         <table>
             <thead>
                 <tr>
@@ -230,21 +224,36 @@ require_once __DIR__ . '/../../app/views/header.php';
                     </td>
                     <td>
                         <?php if ($isSingle): ?>
-                            <select name="discord_role_id_single[<?= h($rankName) ?>]" data-single-role-select>
-                                <option value="">— No role selected —</option>
-                                <?php foreach ($discordRoles as $role): ?>
-                                    <?php if ((string)$role['name'] === '@everyone') continue; ?>
-                                    <option value="<?= h((string)$role['id']) ?>" <?= in_array((string)$role['id'], $selected, true) ? 'selected' : '' ?>>
-                                        <?= h((string)$role['name']) ?> (position <?= h((string)$role['position']) ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <div class="role-picker role-picker-single" data-role-picker data-role-picker-single>
+                                <input type="hidden" name="discord_role_id_single[<?= h($rankName) ?>]" value="<?= h($selected[0] ?? '') ?>" data-role-picker-single-value>
+                                <button class="role-picker-toggle" type="button" data-role-picker-toggle>
+                                    <span class="summary" data-role-picker-summary><?= $currentSummary ? h(implode(', ', $currentSummary)) : 'Select one Discord role' ?></span>
+                                </button>
+                                <div class="role-picker-menu">
+                                    <input type="text" class="role-picker-search" placeholder="Search roles..." data-role-picker-search>
+                                    <div data-role-picker-options>
+                                        <label class="role-picker-option" data-role-picker-option data-filter-text="">
+                                            <input type="radio" name="role_picker_single_ui_<?= h(preg_replace('/[^A-Za-z0-9_]+/', '_', $rankName) ?: 'rank') ?>" value="" data-role-picker-radio data-role-name="" <?= empty($selected) ? 'checked' : '' ?>>
+                                            <span>— No role selected —</span>
+                                        </label>
+                                        <?php foreach ($discordRoles as $role): ?>
+                                            <?php if ((string)$role['name'] === '@everyone') continue; ?>
+                                            <label class="role-picker-option" data-role-picker-option data-filter-text="<?= h(mb_strtolower((string)$role['name'] . ' ' . (string)$role['position'], 'UTF-8')) ?>">
+                                                <input type="radio" name="role_picker_single_ui_<?= h(preg_replace('/[^A-Za-z0-9_]+/', '_', $rankName) ?: 'rank') ?>" value="<?= h((string)$role['id']) ?>" data-role-picker-radio data-role-name="<?= h((string)$role['name']) ?>" <?= in_array((string)$role['id'], $selected, true) ? 'checked' : '' ?>>
+                                                <span><?= h((string)$role['name']) ?> <span class="small muted">(position <?= h((string)$role['position']) ?>)</span></span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <div class="role-picker-empty" data-role-picker-empty hidden>No roles match that search.</div>
+                                </div>
+                            </div>
                         <?php else: ?>
                             <div class="role-picker" data-role-picker>
                                 <button class="role-picker-toggle" type="button" data-role-picker-toggle>
                                     <span class="summary" data-role-picker-summary><?= $currentSummary ? h(implode(', ', $currentSummary)) : 'Select one or more Discord roles' ?></span>
                                 </button>
                                 <div class="role-picker-menu">
+                                    <input type="text" class="role-picker-search" placeholder="Search roles..." data-role-picker-search>
                                     <div data-role-picker-options>
                                         <?php foreach ($discordRoles as $role): ?>
                                             <?php if ((string)$role['name'] === '@everyone') continue; ?>
@@ -257,7 +266,7 @@ require_once __DIR__ . '/../../app/views/header.php';
                                     <div class="role-picker-empty" data-role-picker-empty hidden>No roles match that search.</div>
                                 </div>
                             </div>
-                            <div class="small muted" style="margin-top:6px">Click to open, then tick the roles you want.</div>
+                            <div class="small muted" style="margin-top:6px">Click to open, search if needed, then tick the roles you want.</div>
                         <?php endif; ?>
                     </td>
                     <td>
@@ -273,91 +282,98 @@ require_once __DIR__ . '/../../app/views/header.php';
     <script>
     document.addEventListener('DOMContentLoaded', function () {
         const pickers = document.querySelectorAll('[data-role-picker]');
+
         const updateSummary = (picker) => {
-            const checked = Array.from(picker.querySelectorAll('[data-role-picker-checkbox]:checked')).map(el => el.getAttribute('data-role-name') || '').filter(Boolean);
             const summary = picker.querySelector('[data-role-picker-summary]');
+            if (!summary) return;
+
+            if (picker.hasAttribute('data-role-picker-single')) {
+                const selected = picker.querySelector('[data-role-picker-radio]:checked');
+                const name = selected ? (selected.getAttribute('data-role-name') || '') : '';
+                summary.textContent = name !== '' ? name : 'Select one Discord role';
+                const hidden = picker.querySelector('[data-role-picker-single-value]');
+                if (hidden) {
+                    hidden.value = selected ? (selected.value || '') : '';
+                }
+                return;
+            }
+
+            const checked = Array.from(picker.querySelectorAll('[data-role-picker-checkbox]:checked'))
+                .map((el) => el.getAttribute('data-role-name') || '')
+                .filter(Boolean);
             summary.textContent = checked.length ? checked.join(', ') : 'Select one or more Discord roles';
+        };
+
+        const applyPickerFilter = (picker) => {
+            const search = picker.querySelector('[data-role-picker-search]');
+            const needle = ((search ? search.value : '') || '').trim().toLowerCase();
+            const options = Array.from(picker.querySelectorAll('[data-role-picker-option]'));
+            const empty = picker.querySelector('[data-role-picker-empty]');
+            let visibleCount = 0;
+
+            options.forEach((option) => {
+                const haystack = (option.getAttribute('data-filter-text') || '').toLowerCase();
+                const selectedInput = option.querySelector('[data-role-picker-checkbox]:checked, [data-role-picker-radio]:checked');
+                const isPlaceholder = haystack === '' && option.querySelector('[data-role-picker-radio]');
+                const visible = needle === '' || isPlaceholder || haystack.includes(needle) || !!selectedInput;
+                option.hidden = !visible;
+                if (visible) visibleCount++;
+            });
+
+            if (empty) {
+                empty.hidden = visibleCount !== 0;
+            }
         };
 
         pickers.forEach((picker) => {
             const toggle = picker.querySelector('[data-role-picker-toggle]');
-            const options = Array.from(picker.querySelectorAll('[data-role-picker-option]'));
-            const empty = picker.querySelector('[data-role-picker-empty]');
+            const search = picker.querySelector('[data-role-picker-search]');
 
             updateSummary(picker);
+            applyPickerFilter(picker);
 
-            toggle.addEventListener('click', function (event) {
-                event.stopPropagation();
-                document.querySelectorAll('[data-role-picker].open').forEach((openPicker) => {
-                    if (openPicker !== picker) {
-                        openPicker.classList.remove('open');
+            if (toggle) {
+                toggle.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                    document.querySelectorAll('[data-role-picker].open').forEach((openPicker) => {
+                        if (openPicker !== picker) {
+                            openPicker.classList.remove('open');
+                        }
+                    });
+                    picker.classList.toggle('open');
+                    if (picker.classList.contains('open') && search) {
+                        window.setTimeout(() => search.focus(), 0);
                     }
                 });
-                picker.classList.toggle('open');
-            });
+            }
 
             picker.querySelectorAll('[data-role-picker-checkbox]').forEach((checkbox) => {
-                checkbox.addEventListener('change', function () { updateSummary(picker); });
-            });
-
-        });
-
-        const globalRoleFilter = document.querySelector('[data-global-role-filter]');
-        const singleSelects = Array.from(document.querySelectorAll('[data-single-role-select]'));
-        const singleSelectOptionCache = new Map();
-
-        singleSelects.forEach((select) => {
-            singleSelectOptionCache.set(select, Array.from(select.options).map((option) => ({
-                value: option.value,
-                text: option.textContent || '',
-                selected: option.selected,
-                placeholder: option.value === ''
-            })));
-        });
-
-        const applyGlobalRoleFilter = () => {
-            const needle = (globalRoleFilter ? globalRoleFilter.value : '').trim().toLowerCase();
-
-            pickers.forEach((picker) => {
-                const options = Array.from(picker.querySelectorAll('[data-role-picker-option]'));
-                const empty = picker.querySelector('[data-role-picker-empty]');
-                let visibleCount = 0;
-                options.forEach((option) => {
-                    const haystack = (option.getAttribute('data-filter-text') || '').toLowerCase();
-                    const checkbox = option.querySelector('[data-role-picker-checkbox]');
-                    const visible = needle === '' || haystack.includes(needle) || (checkbox && checkbox.checked);
-                    option.hidden = !visible;
-                    if (visible) visibleCount++;
-                });
-                if (empty) {
-                    empty.hidden = visibleCount !== 0;
-                }
-            });
-
-            singleSelects.forEach((select) => {
-                const cached = singleSelectOptionCache.get(select) || [];
-                const selectedValue = select.value;
-                select.innerHTML = '';
-                cached.forEach((item) => {
-                    const haystack = item.text.toLowerCase();
-                    const keep = item.placeholder || needle === '' || haystack.includes(needle) || item.value === selectedValue;
-                    if (!keep) {
-                        return;
-                    }
-                    const option = document.createElement('option');
-                    option.value = item.value;
-                    option.textContent = item.text;
-                    option.selected = item.value === selectedValue;
-                    select.appendChild(option);
+                checkbox.addEventListener('change', function () {
+                    updateSummary(picker);
+                    applyPickerFilter(picker);
                 });
             });
-        };
 
-        if (globalRoleFilter) {
-            globalRoleFilter.addEventListener('input', applyGlobalRoleFilter);
-        }
+            picker.querySelectorAll('[data-role-picker-radio]').forEach((radio) => {
+                radio.addEventListener('change', function () {
+                    updateSummary(picker);
+                    applyPickerFilter(picker);
+                    picker.classList.remove('open');
+                });
+            });
 
-        applyGlobalRoleFilter();
+            if (search) {
+                search.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                });
+                search.addEventListener('input', function () {
+                    applyPickerFilter(picker);
+                });
+                search.addEventListener('keydown', function (event) {
+                    event.stopPropagation();
+                });
+            }
+        });
 
         document.addEventListener('click', function (event) {
             document.querySelectorAll('[data-role-picker].open').forEach((picker) => {
