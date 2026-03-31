@@ -123,6 +123,49 @@ function nickname_match_segments(string $value): array
     return array_values($segments);
 }
 
+
+function plural_tail_match(string $candidateValue, string $rsnValue): bool
+{
+    $candidate = normalise_match_source($candidateValue);
+    $rsn = normalise_match_source($rsnValue);
+
+    if ($candidate === '' || $rsn === '') {
+        return false;
+    }
+
+    $candidateTokens = array_values(array_filter(explode('_', $candidate), static fn(string $token): bool => $token !== ''));
+    $rsnTokens = array_values(array_filter(explode('_', $rsn), static fn(string $token): bool => $token !== ''));
+
+    if ($candidateTokens === [] || count($candidateTokens) !== count($rsnTokens)) {
+        return false;
+    }
+
+    $last = count($candidateTokens) - 1;
+
+    for ($i = 0; $i < $last; $i++) {
+        if ($candidateTokens[$i] !== $rsnTokens[$i]) {
+            return false;
+        }
+    }
+
+    $candidateLast = $candidateTokens[$last];
+    $rsnLast = $rsnTokens[$last];
+
+    if ($candidateLast === $rsnLast) {
+        return true;
+    }
+
+    if ($candidateLast . 's' === $rsnLast) {
+        return true;
+    }
+
+    if ($rsnLast . 's' === $candidateLast) {
+        return true;
+    }
+
+    return false;
+}
+
 function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $candidateSources): array
 {
     $candidateNorms = [];
@@ -186,6 +229,24 @@ function resolve_clan_member_fallback(array $membersByNormalisedRsn, array $cand
         return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
     }
 
+    $pluralTailMatches = [];
+    foreach ($candidateNorms as $candidateNorm) {
+        foreach ($membersByNormalisedRsn as $rsnNorm => $member) {
+            if ($rsnNorm === '') {
+                continue;
+            }
+            if (plural_tail_match($candidateNorm, (string)$rsnNorm)) {
+                $pluralTailMatches[(string)($member['id'] ?? $rsnNorm)] = $member;
+            }
+        }
+    }
+    if (count($pluralTailMatches) === 1) {
+        return ['member' => array_values($pluralTailMatches)[0], 'match_type' => 'plural_tail', 'ambiguous' => false];
+    }
+    if (count($pluralTailMatches) > 1) {
+        return ['member' => null, 'match_type' => 'ambiguous', 'ambiguous' => true];
+    }
+
     return ['member' => null, 'match_type' => 'none', 'ambiguous' => false];
 }
 
@@ -212,24 +273,6 @@ function table_exists(PDO $pdo, string $tableName): bool
     $stmt = $pdo->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table LIMIT 1');
     $stmt->execute(['table' => $tableName]);
     return (bool)$stmt->fetchColumn();
-}
-
-function column_exists(PDO $pdo, string $tableName, string $columnName): bool
-{
-    $stmt = $pdo->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = :table AND column_name = :column LIMIT 1');
-    $stmt->execute(['table' => $tableName, 'column' => $columnName]);
-    return (bool)$stmt->fetchColumn();
-}
-
-function require_columns(PDO $pdo, string $tableName, array $columns): array
-{
-    $missing = [];
-    foreach ($columns as $column) {
-        if (!column_exists($pdo, $tableName, $column)) {
-            $missing[] = $column;
-        }
-    }
-    return $missing;
 }
 
 function require_tables(PDO $pdo, array $tables): array

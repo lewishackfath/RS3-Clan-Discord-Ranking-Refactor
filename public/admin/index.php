@@ -8,21 +8,13 @@ $clanId = (int)env('CLAN_ID', '1');
 $pdo = db();
 $requiredTables = ['guild_settings', 'rs_rank_mappings', 'discord_role_flags', 'discord_user_mappings', 'clan_members'];
 $missingTables = require_tables($pdo, $requiredTables);
-$settingsMissingColumns = !$missingTables ? require_columns($pdo, 'guild_settings', ['log_channel_id', 'log_channel_name_cache', 'send_guest_dm', 'guest_dm_message']) : [];
 
 $status = null;
 $errorMessage = null;
 $mappedRoleIds = [];
 $botRoleIds = [];
-$discordSettings = null;
 
 if (!$missingTables) {
-    if (!$settingsMissingColumns) {
-        $settingsStmt = $pdo->prepare('SELECT * FROM guild_settings WHERE clan_id = :clan_id LIMIT 1');
-        $settingsStmt->execute(['clan_id' => $clanId]);
-        $discordSettings = $settingsStmt->fetch() ?: null;
-    }
-
     $mappedStmt = $pdo->prepare('SELECT discord_role_id FROM rs_rank_mappings WHERE clan_id = :clan_id AND discord_role_id IS NOT NULL AND discord_role_id <> ""');
     $mappedStmt->execute(['clan_id' => $clanId]);
     $mappedRoleIds = array_map('strval', $mappedStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
@@ -61,22 +53,6 @@ require_once __DIR__ . '/../../app/views/header.php';
     <h2>Server Readiness</h2>
     <p class="muted">This checks the bot installation, guild access and role hierarchy directly through Discord's REST API using the bot token in your <code>.env</code>.</p>
 </div>
-
-<?php if (!$missingTables && !$settingsMissingColumns): ?>
-<div class="grid two">
-    <div class="card">
-        <h3>Discord Settings</h3>
-        <table>
-            <tr><th>Log Channel</th><td><?= !empty($discordSettings['log_channel_name_cache']) ? '#' . h((string)$discordSettings['log_channel_name_cache']) : '<span class="muted">Not configured</span>' ?></td></tr>
-            <tr><th>Guest DM</th><td><span class="status <?= !empty($discordSettings['send_guest_dm']) ? 'ok' : 'warn' ?>"><?= !empty($discordSettings['send_guest_dm']) ? 'Enabled' : 'Disabled' ?></span></td></tr>
-        </table>
-        <div class="table-actions">
-            <div class="hint">Configure logging and Guest DM behaviour before live sync is enabled.</div>
-            <a class="btn-secondary" href="/admin/discord-settings.php">Open Discord Settings</a>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
 
 <?php if ($missingTables): ?>
     <div class="card">
