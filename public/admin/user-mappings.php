@@ -6,16 +6,48 @@ require_login();
 $pdo = db();
 $guildId = (string)env('DISCORD_GUILD_ID', '');
 $clanId = (int)env('CLAN_ID', '1');
-$missingTables = require_tables($pdo, ['discord_user_mappings', 'clan_members']);
+$missingTables = require_tables($pdo, ['discord_user_mappings', 'discord_role_flags', 'clan_members']);
 $guildRoles = [];
 $guildRoleMap = [];
+
+function member_has_bot_role(array $roleIds, array $roleFlags): bool
+{
+    foreach ($roleIds as $roleId) {
+        $roleId = (string)$roleId;
+        if ($roleId === '') {
+            continue;
+        }
+        $flag = $roleFlags[$roleId] ?? null;
+        if (!empty($flag['is_bot_role'])) {
+            return true;
+        }
+    }
+    return false;
+}
 
 if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf_or_fail();
 
     try {
         $discordMembers = discord_list_guild_members($guildId);
-        $memberChoices = $_POST['member_id'] ?? [];
+
+        $roleFlags = [];
+        $flagStmt = $pdo->prepare('SELECT * FROM discord_role_flags WHERE discord_guild_id = :guild_id');
+        $flagStmt->execute(['guild_id' => $guildId]);
+        foreach (($flagStmt->fetchAll() ?: []) as $row) {
+            $roleFlags[(string)$row['discord_role_id']] = $row;
+        }
+
+        $discordMembersById = [];
+        foreach ($discordMembers as $discordMember) {
+            $summary = discord_format_member_summary($discordMember);
+            $discordMembersById[(string)$summary['user_id']] = [
+                'member' => $discordMember,
+                'summary' => $summary,
+            ];
+        }
+
+        $memberChoices = is_array($_POST['member_id'] ?? null) ? $_POST['member_id'] : [];
 
         $clanMembersById = [];
         $clanStmt = $pdo->prepare('SELECT id, rsn, rank_name FROM clan_members WHERE clan_id = :clan_id AND is_active = 1');
@@ -29,10 +61,26 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $saved = 0;
         $cleared = 0;
-        foreach ($discordMembers as $discordMember) {
-            $summary = discord_format_member_summary($discordMember);
-            $userId = (string)$summary['user_id'];
-            $memberId = trim((string)($memberChoices[$userId] ?? ''));
+        $skippedBotRole = 0;
+        foreach ($memberChoices as $userId => $selectedMemberId) {
+            $userId = trim((string)$userId);
+            if ($userId === '' || !isset($discordMembersById[$userId])) {
+                continue;
+            }
+
+            $discordMember = $discordMembersById[$userId]['member'];
+            $summary = $discordMembersById[$userId]['summary'];
+            if ((bool)($discordMember['user']['bot'] ?? false)) {
+                continue;
+            }
+
+            $currentRoleIds = array_values(array_filter(array_map('strval', $discordMember['roles'] ?? []), static fn(string $id): bool => $id !== ''));
+            if (member_has_bot_role($currentRoleIds, $roleFlags)) {
+                $skippedBotRole++;
+                continue;
+            }
+
+            $memberId = trim((string)$selectedMemberId);
 
             if ($memberId === '') {
                 $delete->execute([
@@ -61,7 +109,12 @@ if (!$missingTables && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $saved++;
         }
 
-        flash('success', 'User mappings saved. Manual mappings updated: ' . $saved . '. Cleared mappings: ' . $cleared . '. Blank selections remain runtime-only nickname fallbacks.');
+        $message = 'User mappings saved. Manual mappings updated: ' . $saved . '. Cleared mappings: ' . $cleared . '.';
+        if ($skippedBotRole > 0) {
+            $message .= ' Skipped bot-role users: ' . $skippedBotRole . '.';
+        }
+        $message .= ' Blank selections remain runtime-only nickname fallbacks.';
+        flash('success', $message);
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
@@ -87,6 +140,13 @@ if (!$missingTables) {
     $guildRoleMap = discord_role_map($guildRoles);
     $discordMembersRaw = discord_list_guild_members($guildId);
 
+    $roleFlags = [];
+    $flagStmt = $pdo->prepare('SELECT * FROM discord_role_flags WHERE discord_guild_id = :guild_id');
+    $flagStmt->execute(['guild_id' => $guildId]);
+    foreach (($flagStmt->fetchAll() ?: []) as $row) {
+        $roleFlags[(string)$row['discord_role_id']] = $row;
+    }
+
     $stmt = $pdo->prepare('SELECT * FROM discord_user_mappings WHERE clan_id = :clan_id AND discord_guild_id = :guild_id');
     $stmt->execute(['clan_id' => $clanId, 'guild_id' => $guildId]);
     foreach ($stmt->fetchAll() as $row) {
@@ -106,6 +166,11 @@ if (!$missingTables) {
     foreach ($discordMembersRaw as $member) {
         $summary = discord_format_member_summary($member);
         if ((bool)($member['user']['bot'] ?? false)) {
+            continue;
+        }
+
+        $currentRoleIds = array_values(array_filter(array_map('strval', $member['roles'] ?? []), static fn(string $id): bool => $id !== ''));
+        if (member_has_bot_role($currentRoleIds, $roleFlags)) {
             continue;
         }
 
@@ -141,7 +206,7 @@ if (!$missingTables) {
         }
 
         $currentRoles = [];
-        foreach (($summary['roles'] ?? []) as $roleId) {
+        foreach ($currentRoleIds as $roleId) {
             $role = $guildRoleMap[(string)$roleId] ?? null;
             if (!is_array($role)) {
                 continue;

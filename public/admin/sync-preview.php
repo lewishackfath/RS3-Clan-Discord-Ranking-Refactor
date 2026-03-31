@@ -176,6 +176,19 @@ if (!$missingTables) {
                 continue;
             }
 
+            $currentRoleIds = array_values(array_filter(array_map('strval', $discordMember['roles'] ?? []), static fn(string $id): bool => $id !== ''));
+            $hasBotRole = false;
+            foreach ($currentRoleIds as $roleId) {
+                $flag = $roleFlags[(string)$roleId] ?? null;
+                if (!empty($flag['is_bot_role'])) {
+                    $hasBotRole = true;
+                    break;
+                }
+            }
+            if ($hasBotRole) {
+                continue;
+            }
+
             $summaryMember = discord_format_member_summary($discordMember);
             $userId = (string)$summaryMember['user_id'];
             $manual = $manualMappings[$userId] ?? null;
@@ -194,7 +207,6 @@ if (!$missingTables) {
                 $resolvedBy = $resolvedMember ? ('nickname_' . (string)($fallbackMatch['match_type'] ?? 'exact')) : (!empty($fallbackMatch['ambiguous']) ? 'ambiguous' : 'none');
             }
 
-            $currentRoleIds = array_values(array_filter(array_map('strval', $discordMember['roles'] ?? []), static fn(string $id): bool => $id !== ''));
             $currentRoles = preview_member_roles($currentRoleIds, $roleMap, $roleFlags);
 
             $rankName = $resolvedMember ? (string)($resolvedMember['rank_name'] ?? '') : '';
