@@ -15,6 +15,7 @@ $errorMessage = null;
 $mappedRoleIds = [];
 $botRoleIds = [];
 $discordSettings = null;
+$latestSyncRun = null;
 
 if (!$missingTables) {
     if (!$settingsMissingColumns) {
@@ -30,6 +31,12 @@ if (!$missingTables) {
     $botStmt = $pdo->prepare('SELECT discord_role_id FROM discord_role_flags WHERE discord_guild_id = :guild_id AND is_bot_role = 1');
     $botStmt->execute(['guild_id' => $guildId]);
     $botRoleIds = array_map('strval', $botStmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+
+    if (table_exists($pdo, 'sync_runs')) {
+        $latestRunStmt = $pdo->prepare('SELECT * FROM sync_runs WHERE clan_id = :clan_id ORDER BY started_at_utc DESC, id DESC LIMIT 1');
+        $latestRunStmt->execute(['clan_id' => $clanId]);
+        $latestSyncRun = $latestRunStmt->fetch() ?: null;
+    }
 
     try {
         $status = validate_bot_readiness($guildId, $mappedRoleIds, $botRoleIds);
@@ -73,6 +80,24 @@ require_once __DIR__ . '/../../app/views/header.php';
         <div class="table-actions">
             <div class="hint">Configure logging and Guest DM behaviour before live sync is enabled.</div>
             <a class="btn-secondary" href="/admin/discord-settings.php">Open Discord Settings</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Sync History</h3>
+        <?php if ($latestSyncRun): ?>
+            <table>
+                <tr><th>Latest Run</th><td>#<?= h((string)$latestSyncRun['id']) ?></td></tr>
+                <tr><th>Status</th><td><span class="status <?= ((string)$latestSyncRun['status'] === 'completed') ? 'ok' : (((string)$latestSyncRun['status'] === 'completed_with_errors') ? 'warn' : 'bad') ?>"><?= h((string)$latestSyncRun['status']) ?></span></td></tr>
+                <tr><th>Started</th><td><?= h((string)$latestSyncRun['started_at_utc']) ?> UTC</td></tr>
+                <tr><th>Changed</th><td><?= h((string)($latestSyncRun['changed_members'] ?? 0)) ?> / <?= h((string)($latestSyncRun['total_members'] ?? 0)) ?></td></tr>
+            </table>
+        <?php else: ?>
+            <p class="muted">No sync runs have been logged yet.</p>
+        <?php endif; ?>
+        <div class="table-actions">
+            <div class="hint">Inspect full run history, per-member role changes, Guest fallbacks and DM outcomes.</div>
+            <a class="btn-secondary" href="/admin/sync-history.php">Open Sync History</a>
         </div>
     </div>
 </div>

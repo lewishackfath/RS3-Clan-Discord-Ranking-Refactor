@@ -86,6 +86,8 @@ function nav_active(string $needle, string $path): string { return str_contains(
         .preview-grid { display:grid; gap:18px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
         .preview-grid .stat { min-height: 100%; }
         .code-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); background:#0b1220; }
+        .card-link { display:block; color:inherit; text-decoration:none; }
+        .card-link:hover { text-decoration:none; }
 
         @media (max-width: 980px) {
             .layout { grid-template-columns: 1fr; }
@@ -109,6 +111,7 @@ function nav_active(string $needle, string $path): string { return str_contains(
             <a class="<?= nav_active('/admin/user-mappings.php', $path) ?>" href="/admin/user-mappings.php">User Mappings</a>
             <a class="<?= nav_active('/admin/discord-settings.php', $path) ?>" href="/admin/discord-settings.php">Discord Settings</a>
             <a class="<?= nav_active('/admin/sync-preview.php', $path) ?>" href="/admin/sync-preview.php">Sync Preview</a>
+            <a class="<?= nav_active('/admin/sync-history.php', $path) ?>" href="/admin/sync-history.php">Sync History</a>
         </nav>
     </aside>
     <main class="main">
